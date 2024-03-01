@@ -14,7 +14,9 @@
 # limitations under the License.
 #
 
-FROM oracle/database:18.4.0-xe as base
+# FROM oracle/database:18.4.0-xe as base
+
+FROM container-registry.oracle.com/database/express:latest as base
 
 
 COPY init.sql /docker-entrypoint-initdb.d/setup/
