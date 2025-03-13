@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, 2023 Oracle and/or its affiliates.
+ * Copyright (c) 2022, 2025 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import io.helidon.http.media.InstanceWriter;
 import io.helidon.http.media.MediaContext;
 import io.helidon.webclient.api.ClientRequestBase;
 import io.helidon.webclient.api.ClientUri;
+import io.helidon.webclient.api.Proxy.ProxyType;
 import io.helidon.webclient.api.WebClientServiceRequest;
 import io.helidon.webclient.api.WebClientServiceResponse;
 
@@ -42,10 +43,20 @@ class Http1ClientRequestImpl extends ClientRequestBase<Http1ClientRequest, Http1
                            Method method,
                            ClientUri clientUri,
                            Map<String, String> properties) {
+        this(http1Client, method, clientUri, null, properties);
+    }
+
+    Http1ClientRequestImpl(Http1ClientImpl http1Client,
+                               Method method,
+                               ClientUri clientUri,
+                               Boolean sendExpectContinue,
+                               Map<String, String> properties) {
         super(http1Client.clientConfig(),
                 http1Client.webClient().cookieManager(),
                 Http1Client.PROTOCOL_ID,
-                method, clientUri,
+                method,
+                clientUri,
+                sendExpectContinue,
                 properties);
         this.http1Client = http1Client;
     }
@@ -58,6 +69,7 @@ class Http1ClientRequestImpl extends ClientRequestBase<Http1ClientRequest, Http1
         this(request.http1Client,
                 method,
                 clientUri,
+                null,
                 properties);
 
         followRedirects(request.followRedirects());
@@ -177,6 +189,14 @@ class Http1ClientRequestImpl extends ClientRequestBase<Http1ClientRequest, Http1
     @Override
     protected MediaContext mediaContext() {
         return super.mediaContext();
+    }
+
+    @Override
+    protected void additionalHeaders() {
+        super.additionalHeaders();
+        if (proxy().type() != ProxyType.NONE) {
+            header(PROXY_CONNECTION);
+        }
     }
 
     Http1ClientImpl http1Client() {

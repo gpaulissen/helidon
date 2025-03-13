@@ -40,6 +40,8 @@ import jakarta.enterprise.inject.Instance;
 import jakarta.enterprise.inject.spi.configurator.BeanConfigurator;
 import jakarta.enterprise.util.TypeLiteral;
 import jakarta.inject.Named;
+import oracle.ucp.UniversalConnectionPoolException;
+import oracle.ucp.admin.UniversalConnectionPoolManagerImpl;
 import oracle.ucp.jdbc.PoolDataSource;
 import oracle.ucp.jdbc.PoolDataSourceFactory;
 import oracle.ucp.jdbc.PoolDataSourceImpl;
@@ -141,7 +143,10 @@ public class UCPBackedDataSourceExtension extends AbstractDataSourceExtension {
             .produceWith(instance -> {
                     try {
                         return createDataSource(instance, dataSourceName, xa, dataSourceProperties);
-                    } catch (IntrospectionException | ReflectiveOperationException | SQLException exception) {
+                    } catch (IntrospectionException
+                             | ReflectiveOperationException
+                             | SQLException
+                             | UniversalConnectionPoolException exception) {
                         throw new CreationException(exception.getMessage(), exception);
                     }
                 })
@@ -162,7 +167,7 @@ public class UCPBackedDataSourceExtension extends AbstractDataSourceExtension {
                                                    Named dataSourceName,
                                                    boolean xa,
                                                    Properties properties)
-        throws IntrospectionException, ReflectiveOperationException, SQLException {
+        throws IntrospectionException, ReflectiveOperationException, SQLException, UniversalConnectionPoolException {
         // See
         // https://docs.oracle.com/en/database/oracle/oracle-database/19/jjucp/get-started.html#GUID-2CC8D6EC-483F-4942-88BA-C0A1A1B68226
         // for the general pattern.
@@ -179,12 +184,14 @@ public class UCPBackedDataSourceExtension extends AbstractDataSourceExtension {
                     for (PropertyDescriptor pd : pds) {
                         if (propertyName.equals(pd.getName())) {
                             // We have matched a Java Beans property on the PoolDataSource implementation class.  Set it
-                            // if we can.  Note that these properties are NOT those of the PoolDataSource's *underlying*
-                            // "real" connection factory (usually a DataSource that provides the actual connections
-                            // ultimately pooled by the Universal Connection Pool).  Those are handled in a manner
-                            // unfortunately restricted by the limited configuration mechanism belonging to the
-                            // PoolDataSource implementation itself via the connectionFactoryProperties object.  See
-                            // below.
+                            // if we can. PoolDataSourceImpl Java Beans properties happen to be either String-, int-,
+                            // long-, or boolean-typed properties only.
+                            //
+                            // Note that these properties are NOT those of the PoolDataSource's *underlying* "real"
+                            // connection factory (usually a DataSource that provides the actual connections ultimately
+                            // pooled by the Universal Connection Pool). Those are handled in a manner unfortunately
+                            // restricted by the limited configuration mechanism belonging to the PoolDataSource
+                            // implementation itself via the connectionFactoryProperties object. See below.
                             Method writeMethod = pd.getWriteMethod();
                             if (writeMethod != null) {
                                 Class<?> type = pd.getPropertyType();
@@ -205,71 +212,47 @@ public class UCPBackedDataSourceExtension extends AbstractDataSourceExtension {
                         }
                     }
                     if (!handled) {
-                        // We have found a property that is not a Java Beans property of the PoolDataSource, but is
-                        // supposed to be a property of the connection factory that it wraps.
+                        // We have found a property that is not a writable Java Beans property of the PoolDataSource,
+                        // but is supposed to be a writable Java Beans property of the connection factory that it wraps.
                         //
-                        // (Sadly, "serviceName" and "pdbRoles" are special properties that have significance to certain
-                        // connection factories (such as Oracle database-oriented DataSources), and to the
-                        // oracle.ucp.jdbc.UCPConnectionBuilder class, which underlies getConnection(user, password)
-                        // calls, but which sadly cannot be set on a PoolDataSource except by means of some irrelevant
-                        // XML configuration.  We work around this design and special case it below, not here.)
-                        //
-                        // Sadly, the Universal Connection Pool lacks a mechanism to tunnel arbitrary Java
+                        // Sadly, the Universal Connection Pool lacks a mechanism to send *arbitrarily-typed* Java
                         // Beans-conformant property values destined for the underlying connection factory (which is
-                        // usually a DataSource or ConnectionPoolDataSource implementation, but may be other things)
-                        // through to that underlying connection factory with arbitrary type information set
-                        // properly. Because the PoolDataSource is in charge of instantiating the connection factory
-                        // (the underlying DataSource), you can't pass a fully configured DataSource into it, nor can
-                        // you access an unconfigured instance of it that you can work with. The only configuration the
-                        // Universal Connection Pool supports is via a Properties object, whose values are retrieved by
-                        // the PoolDataSource implementation, as Strings.  This limits the kinds of underlying
-                        // connection factories (DataSource implementations, usually) that can be fully configured with
-                        // the Universal Connection Pool to Strings and those Strings which can be converted by the
-                        // PoolDataSourceImpl#toBasicType(String, String) method.
+                        // usually a DataSource or ConnectionPoolDataSource implementation, but may be other things) to
+                        // that underlying connection factory. Because the PoolDataSource is in charge of instantiating
+                        // the connection factory, you can't pass a fully configured DataSource into it, nor can you
+                        // access an unconfigured instance of it that you can work with. The only configuration the
+                        // Universal Connection Pool supports sending to the connection factory is via a Properties
+                        // object, whose values are retrieved by the PoolDataSource implementation, as Strings. This
+                        // limits the kinds of underlying connection factories (DataSource implementations, usually)
+                        // that can be fully configured with the Universal Connection Pool to Strings and those Strings
+                        // which can be converted by the PoolDataSourceImpl#toBasicType(String, String) method.
                         connectionFactoryProperties.setProperty(propertyName, properties.getProperty(propertyName));
                     }
                 }
             }
-            Object serviceName = connectionFactoryProperties.remove("serviceName");
-            Object pdbRoles = connectionFactoryProperties.remove("pdbRoles");
-            // Used for OCI ATP Integration
-            // Removing this so that it is not set on connectionFactoryProperties,
-            // Else we get exception with getConnection using this DS, if its set.
-            connectionFactoryProperties.remove("tnsNetServiceName");
             if (!connectionFactoryProperties.stringPropertyNames().isEmpty()) {
                 // We found some String-typed properties that are destined for the underlying connection factory to
-                // hopefully fully configure it.  Apply them here.
+                // hopefully fully configure it. Apply them here.
                 returnValue.setConnectionFactoryProperties(connectionFactoryProperties);
-            }
-            // Set the PoolDataSource's serviceName property so that it appears to the PoolDataSource to have been set
-            // via the undocumented XML configuration that the PoolDataSource can apparently be configured with in
-            // certain (irrelevant for Helidon) application server cases.
-            if (serviceName instanceof String) {
-                try {
-                    Method m = returnValue.getClass().getDeclaredMethod("setServiceName", String.class);
-                    if (m.trySetAccessible()) {
-                        m.invoke(returnValue, serviceName);
-                    }
-                } catch (NoSuchMethodException ignoreOnPurpose) {
-
-                }
-            }
-            // Set the PoolDataSource's pdbRoles property so that it appears to the PoolDataSource to have been set via
-            // the undocumented XML configuration that the PoolDataSource can apparently be configured with in certain
-            // (irrelevant for Helidon) application server cases.
-            if (pdbRoles instanceof Properties) {
-                try {
-                    Method m = returnValue.getClass().getDeclaredMethod("setPdbRoles", Properties.class);
-                    if (m.trySetAccessible()) {
-                        m.invoke(returnValue, pdbRoles);
-                    }
-                } catch (NoSuchMethodException ignoreOnPurpose) {
-
-                }
             }
         }
         if (returnValue.getConnectionPoolName() == null) {
-          returnValue.setConnectionPoolName(dataSourceName.value());
+            String proposedConnectionPoolName = dataSourceName.value();
+            String[] existingConnectionPoolNames =
+                UniversalConnectionPoolManagerImpl.getUniversalConnectionPoolManager().getConnectionPoolNames();
+            for (String existingConnectionPoolName : existingConnectionPoolNames) {
+                if (proposedConnectionPoolName.equals(existingConnectionPoolName)) {
+                    // If the return value of an invocation of PoolDataSource#getConnectionPoolName() equals the name of
+                    // an already existing UniversalConnectionPool instance, the first invocation of
+                    // PoolDataSource#getConnection(), or any other operation that requires pool creation, will throw a
+                    // SQLException (!). In this case only we let the auto-generated name (!) be used instead.
+                    proposedConnectionPoolName = null;
+                    break;
+                }
+            }
+            if (proposedConnectionPoolName != null) {
+                returnValue.setConnectionPoolName(proposedConnectionPoolName);
+            }
         }
         Instance<SSLContext> sslContextInstance = instance.select(SSLContext.class, dataSourceName);
         if (!sslContextInstance.isUnsatisfied()) {

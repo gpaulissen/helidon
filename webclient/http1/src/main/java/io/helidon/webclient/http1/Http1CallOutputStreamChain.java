@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023 Oracle and/or its affiliates.
+ * Copyright (c) 2023, 2025 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -130,7 +130,7 @@ class Http1CallOutputStreamChain extends Http1CallChainBase {
         if (originalRequest().followRedirects()
                 && RedirectionProcessor.redirectionStatusCode(responseStatus)) {
             checkRedirectHeaders(responseHeaders);
-            URI newUri = URI.create(responseHeaders.get(HeaderNames.LOCATION).value());
+            URI newUri = URI.create(responseHeaders.get(HeaderNames.LOCATION).get());
             ClientUri redirectUri = ClientUri.create(newUri);
             if (newUri.getHost() == null) {
                 UriInfo resolvedUri = cos.lastRequest.resolvedUri();
@@ -354,7 +354,11 @@ class Http1CallOutputStreamChain extends Http1CallChainBase {
         }
 
         private void sendPrologueAndHeader() {
-            boolean expects100Continue = clientConfig.sendExpectContinue() && !noData;
+            // setting for expect 100 header, can be overridden for each request
+            boolean expects100Continue = connection.allowExpectContinue()
+                    && !noData
+                    && originalRequest.sendExpectContinue().orElse(clientConfig.sendExpectContinue());
+
             if (expects100Continue) {
                 headers.add(HeaderValues.EXPECT_100);
             }
@@ -372,17 +376,16 @@ class Http1CallOutputStreamChain extends Http1CallChainBase {
                 headers.remove(HeaderNames.CONTENT_LENGTH);
             }
 
+            // write prologue and headers in single buffer to avoid multiple TLS records,
+            // which in turn can result in a delay when TCP_NO_DELAY is false
+            BufferData buffer = BufferData.growing(512);
+            buffer.write(prologue);
             if (LOGGER.isLoggable(System.Logger.Level.TRACE)) {
                 ctx.log(LOGGER, System.Logger.Level.TRACE, "send prologue: %n%s", prologue.debugDataHex());
-            }
-            writer.writeNow(prologue);
-
-            BufferData headerBuffer = BufferData.growing(128);
-            if (LOGGER.isLoggable(System.Logger.Level.TRACE)) {
                 ctx.log(LOGGER, System.Logger.Level.TRACE, "send headers:%n%s", headers);
             }
-            writeHeaders(headers, headerBuffer, protocolConfig.validateRequestHeaders());
-            writer.writeNow(headerBuffer);
+            writeHeaders(headers, buffer, protocolConfig.validateRequestHeaders());
+            writer.writeNow(buffer);
 
             whenSent.complete(request);
 
@@ -397,6 +400,7 @@ class Http1CallOutputStreamChain extends Http1CallChainBase {
                     // we assume this is a timeout exception, if the socket got closed, next read will throw appropriate exception
                     // we treat this as receiving 100-Continue
                     responseStatus = null;
+                    connection.allowExpectContinue(false);
                 } finally {
                     connection.readTimeout(originalRequest.readTimeout());
                 }
@@ -440,7 +444,7 @@ class Http1CallOutputStreamChain extends Http1CallChainBase {
         }
 
         private void redirect(Status lastStatus, WritableHeaders<?> headerValues) {
-            String redirectedUri = headerValues.get(HeaderNames.LOCATION).value();
+            String redirectedUri = headerValues.get(HeaderNames.LOCATION).get();
             ClientUri lastUri = originalRequest.uri();
             Method method;
             boolean sendEntity;
@@ -492,7 +496,7 @@ class Http1CallOutputStreamChain extends Http1CallChainBase {
                             method = Method.GET;
                             sendEntity = false;
                         }
-                        redirectedUri = response.headers().get(HeaderNames.LOCATION).value();
+                        redirectedUri = response.headers().get(HeaderNames.LOCATION).get();
                     }
                 } else {
                     if (!sendEntity) {

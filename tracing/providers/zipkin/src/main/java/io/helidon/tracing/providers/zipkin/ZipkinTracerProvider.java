@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2023 Oracle and/or its affiliates.
+ * Copyright (c) 2018, 2024 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,6 +47,12 @@ public class ZipkinTracerProvider implements OpenTracingProvider {
 
     private static final List<String> TRACING_CONTEXT_PROPAGATION_HEADERS =
             List.of(X_OT_SPAN_CONTEXT, X_B3_TRACE_ID, X_B3_SPAN_ID, X_B3_PARENT_SPAN_ID, X_B3_SAMPLED, X_B3_FLAGS);
+
+    /**
+     * Public constructor for service loading.
+     */
+    public ZipkinTracerProvider() {
+    }
 
     @Override
     public ZipkinTracerBuilder createBuilder() {

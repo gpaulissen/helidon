@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, 2023 Oracle and/or its affiliates.
+ * Copyright (c) 2022, 2025 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,6 +41,7 @@ import io.helidon.http.Header;
 import io.helidon.http.HeaderNames;
 import io.helidon.http.HeaderValues;
 import io.helidon.http.InternalServerException;
+import io.helidon.http.ServerResponseHeaders;
 import io.helidon.http.Status;
 import io.helidon.microprofile.server.HelidonHK2InjectionManagerFactory.InjectionManagerWrapper;
 import io.helidon.webserver.KeyPerformanceIndicatorSupport;
@@ -66,6 +67,7 @@ import org.glassfish.jersey.server.ContainerException;
 import org.glassfish.jersey.server.ContainerRequest;
 import org.glassfish.jersey.server.ContainerResponse;
 import org.glassfish.jersey.server.ResourceConfig;
+import org.glassfish.jersey.server.ServerProperties;
 import org.glassfish.jersey.server.spi.Container;
 import org.glassfish.jersey.server.spi.ContainerResponseWriter;
 
@@ -74,6 +76,7 @@ class JaxRsService implements HttpService {
      * If set to {@code "true"}, Jersey will ignore responses in exceptions.
      */
     static final String IGNORE_EXCEPTION_RESPONSE = "jersey.config.client.ignoreExceptionResponse";
+    static final String DISABLE_DATASOURCE_PROVIDER = "jersey.config.server.disableDataSourceProvider";
 
     private static final System.Logger LOGGER = System.getLogger(JaxRsService.class.getName());
     private static final Type REQUEST_TYPE = (new GenericType<Ref<ServerRequest>>() { }).getType();
@@ -96,12 +99,25 @@ class JaxRsService implements HttpService {
 
     static JaxRsService create(ResourceConfig resourceConfig, InjectionManager injectionManager) {
 
+        Config config = ConfigProvider.getConfig();
+
+        // Silence warnings from Jersey by disabling the default data source provider. See 9019.
+        // To pass TCK we support a system property to control whether or not we disable the default provider
+        // We also support the property via MicroProfile config in case a user wants to control the property.
+        boolean disableDatasourceProvider = config.getOptionalValue(DISABLE_DATASOURCE_PROVIDER, Boolean.class)
+                .orElseGet(() -> Boolean.parseBoolean(System.getProperty(DISABLE_DATASOURCE_PROVIDER, "true")));
+        if (!resourceConfig.hasProperty(CommonProperties.PROVIDER_DEFAULT_DISABLE) && disableDatasourceProvider) {
+            resourceConfig.addProperties(Map.of(CommonProperties.PROVIDER_DEFAULT_DISABLE, "DATASOURCE"));
+        }
+        if (!resourceConfig.hasProperty(ServerProperties.WADL_FEATURE_DISABLE)) {
+            resourceConfig.addProperties(Map.of(ServerProperties.WADL_FEATURE_DISABLE, "true"));
+        }
+
         InjectionManager ij = injectionManager == null ? null : new InjectionManagerWrapper(injectionManager, resourceConfig);
         ApplicationHandler appHandler = new ApplicationHandler(resourceConfig,
                                                                new WebServerBinder(),
                                                                ij);
         Container container = new HelidonJerseyContainer(appHandler);
-        Config config = ConfigProvider.getConfig();
 
         // This configuration via system properties is for the Jersey Client API. Any
         // response in an exception will be mapped to an empty one to prevent data leaks
@@ -186,11 +202,13 @@ class JaxRsService implements HttpService {
     }
 
     private void doHandle(Context ctx, ServerRequest req, ServerResponse res) {
+        ServerResponseHeaders savedResponseHeaders = ServerResponseHeaders.create(res.headers());
         BaseUriRequestUri uris = BaseUriRequestUri.resolve(req);
         ContainerRequest requestContext = new ContainerRequest(uris.baseUri,
                                                                uris.requestUri,
                                                                req.prologue().method().text(),
-                                                               new HelidonMpSecurityContext(), new MapPropertiesDelegate(),
+                                                               new HelidonMpSecurityContext(),
+                                                               new MapPropertiesDelegate(),
                                                                resourceConfig);
         /*
          MP CORS supports needs a way to obtain the UriInfo from the request context.
@@ -204,7 +222,7 @@ class JaxRsService implements HttpService {
 
         JaxRsResponseWriter writer = new JaxRsResponseWriter(res);
         requestContext.setWriter(writer);
-        requestContext.setEntityStream(req.content().inputStream());
+        requestContext.setEntityStream(new LazyInputStream(req));
         requestContext.setProperty("io.helidon.jaxrs.remote-host", req.remotePeer().host());
         requestContext.setProperty("io.helidon.jaxrs.remote-port", req.remotePeer().port());
         requestContext.setRequestScopedInitializer(ij -> {
@@ -234,6 +252,7 @@ class JaxRsService implements HttpService {
                 if (res instanceof RoutingResponse routing) {
                     if (routing.reset()) {
                         res.status(Status.OK_200);
+                        savedResponseHeaders.forEach(res::header);
                         routing.next();
                     }
                 }
@@ -334,7 +353,8 @@ class JaxRsService implements HttpService {
             if (contentLength > 0) {
                 res.header(HeaderValues.create(HeaderNames.CONTENT_LENGTH, String.valueOf(contentLength)));
             }
-            this.outputStream = res.outputStream();
+            // in case there is an exception during close operation, we would lose the information and wait indefinitely
+            this.outputStream = new ReleaseLatchStream(cdl, res.outputStream());
             return outputStream;
         }
 
@@ -363,6 +383,10 @@ class JaxRsService implements HttpService {
             } catch (IOException e) {
                 cdl.countDown();
                 throw new UncheckedIOException(e);
+            } catch (Throwable e) {
+                // always release on commit, regardless of what happened
+                cdl.countDown();
+                throw e;
             }
         }
 
@@ -378,15 +402,53 @@ class JaxRsService implements HttpService {
 
         @Override
         public boolean enableResponseBuffering() {
-            // Jersey should not try to do the buffering
-            return false;
+            return true;        // enable buffering in Jersey
         }
 
-        public void await() {
+        void await() {
             try {
                 cdl.await();
             } catch (InterruptedException e) {
                 throw new RuntimeException("Failed to wait for Jersey to write response");
+            }
+        }
+    }
+
+    private static class ReleaseLatchStream extends OutputStream {
+        private final CountDownLatch cdl;
+        private final OutputStream delegate;
+
+        private ReleaseLatchStream(CountDownLatch cdl, OutputStream delegate) {
+            this.cdl = cdl;
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void write(int b) throws IOException {
+            delegate.write(b);
+        }
+
+        @Override
+        public void write(byte[] b) throws IOException {
+            delegate.write(b);
+        }
+
+        @Override
+        public void write(byte[] b, int off, int len) throws IOException {
+            delegate.write(b, off, len);
+        }
+
+        @Override
+        public void flush() throws IOException {
+            delegate.flush();
+        }
+
+        @Override
+        public void close() throws IOException {
+            try {
+                delegate.close();
+            } finally {
+                cdl.countDown();
             }
         }
     }

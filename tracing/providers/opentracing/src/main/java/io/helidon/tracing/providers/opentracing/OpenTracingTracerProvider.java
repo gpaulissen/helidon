@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, 2023 Oracle and/or its affiliates.
+ * Copyright (c) 2022, 2024 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,11 +15,18 @@
  */
 package io.helidon.tracing.providers.opentracing;
 
+import java.util.List;
 import java.util.Optional;
+import java.util.ServiceLoader;
 
+import io.helidon.common.HelidonServiceLoader;
+import io.helidon.common.LazyValue;
 import io.helidon.common.Weight;
 import io.helidon.common.Weighted;
+import io.helidon.common.config.Config;
+import io.helidon.common.config.GlobalConfig;
 import io.helidon.tracing.Span;
+import io.helidon.tracing.SpanListener;
 import io.helidon.tracing.Tracer;
 import io.helidon.tracing.TracerBuilder;
 import io.helidon.tracing.spi.TracerProvider;
@@ -30,9 +37,30 @@ import io.opentracing.util.GlobalTracer;
 /**
  * {@link java.util.ServiceLoader} service implementation of {@link io.helidon.tracing.spi.TracerProvider} for Open Tracing
  * tracers.
+ * <p>
+ *     When dealing with the global tracer, manage both the Helidon one and also the OpenTracing one in concert, whether
+ *     defaulting them or assigning them via {@link #global(io.helidon.tracing.Tracer)}.
+ * </p>
  */
 @Weight(Weighted.DEFAULT_WEIGHT - 50) // low weight, so it is easy to override
 public class OpenTracingTracerProvider implements TracerProvider {
+
+    private static final LazyValue<List<SpanListener>> SPAN_LISTENERS =
+            LazyValue.create(() -> HelidonServiceLoader.create(ServiceLoader.load(SpanListener.class)).asList());
+
+    private LazyValue<Tracer> globalHelidonTracer = LazyValue.create(() -> {
+        Config tracingConfig = GlobalConfig.config().get("tracing");
+
+        // Set up to create an explicit OpenTracing tracer only if we have config for tracing, indicating that the user wants
+        // something other than the no-op implementation.
+        if (tracingConfig.exists()) {
+            io.opentracing.Tracer openTracingTracer = OpenTracingTracerBuilder.create(tracingConfig)
+                    .build();
+            GlobalTracer.registerIfAbsent(openTracingTracer);
+        }
+        return OpenTracingTracer.create(GlobalTracer.get());
+    });
+
     @Override
     public TracerBuilder<?> createBuilder() {
         return OpenTracingTracer.builder();
@@ -40,13 +68,17 @@ public class OpenTracingTracerProvider implements TracerProvider {
 
     @Override
     public Tracer global() {
-        return OpenTracingTracer.create(GlobalTracer.get());
+        return globalHelidonTracer.get();
     }
 
     @Override
     public void global(Tracer tracer) {
         if (tracer instanceof OpenTracingTracer opt) {
-            GlobalTracer.registerIfAbsent(opt.openTracing());
+            GlobalTracer.registerIfAbsent(() -> {
+                io.opentracing.Tracer openTracingTracer = opt.openTracing();
+                globalHelidonTracer = LazyValue.create(OpenTracingTracer.create(openTracingTracer));
+                return openTracingTracer;
+            });
         }
     }
 
@@ -55,11 +87,13 @@ public class OpenTracingTracerProvider implements TracerProvider {
         io.opentracing.Tracer tracer = GlobalTracer.get();
         return Optional.ofNullable(tracer.activeSpan())
                 .flatMap(it -> it instanceof NoopSpan ? Optional.empty() : Optional.of(it))
-                .map(it -> new OpenTracingSpan(tracer, it));
+                .map(it -> new OpenTracingSpan(tracer, it,
+                                               SPAN_LISTENERS.get()));
     }
 
     @Override
     public boolean available() {
         return OpenTracingProviderHelper.available();
     }
+
 }

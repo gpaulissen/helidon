@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, 2023 Oracle and/or its affiliates.
+ * Copyright (c) 2020, 2025 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,11 +23,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
-import io.helidon.inject.configdriven.api.ConfigDriven;
+import io.helidon.metrics.api.Counter;
+import io.helidon.metrics.api.Tag;
 
-import jakarta.inject.Inject;
-
-@ConfigDriven(CircuitBreakerConfigBlueprint.class)
 class CircuitBreakerImpl implements CircuitBreaker {
     /*
      Configuration options
@@ -51,8 +49,11 @@ class CircuitBreakerImpl implements CircuitBreaker {
     private final ErrorChecker errorChecker;
     private final String name;
     private final CircuitBreakerConfig config;
+    private final boolean metricsEnabled;
 
-    @Inject
+    private Counter callsCounterMetric;
+    private Counter openedCounterMetric;
+
     CircuitBreakerImpl(CircuitBreakerConfig config) {
         this.delayMillis = config.delay().toMillis();
         this.successThreshold = config.successThreshold();
@@ -61,6 +62,13 @@ class CircuitBreakerImpl implements CircuitBreaker {
         this.errorChecker = ErrorChecker.create(config.skipOn(), config.applyOn());
         this.name = config.name().orElseGet(() -> "circuit-breaker-" + System.identityHashCode(config));
         this.config = config;
+
+        this.metricsEnabled = config.enableMetrics() || MetricsUtils.defaultEnabled();
+        if (metricsEnabled) {
+            Tag nameTag = Tag.create("name", name);
+            callsCounterMetric = MetricsUtils.counterBuilder(FT_CIRCUITBREAKER_CALLS_TOTAL, nameTag);
+            openedCounterMetric = MetricsUtils.counterBuilder(FT_CIRCUITBREAKER_OPENED_TOTAL, nameTag);
+        }
     }
 
     @Override
@@ -75,6 +83,9 @@ class CircuitBreakerImpl implements CircuitBreaker {
 
     @Override
     public <T> T invoke(Supplier<? extends T> supplier) {
+        if (metricsEnabled) {
+            callsCounterMetric.increment();
+        }
         return switch (state.get()) {
             case CLOSED -> executeTask(supplier);
             case HALF_OPEN -> halfOpenTask(supplier);
@@ -137,6 +148,10 @@ class CircuitBreakerImpl implements CircuitBreaker {
                 results.reset();
                 // if we successfully switch to open, we need to schedule switch to half-open
                 scheduleHalf();
+                // update metrics for this transition
+                if (metricsEnabled) {
+                    openedCounterMetric.increment();
+                }
             }
         }
     }

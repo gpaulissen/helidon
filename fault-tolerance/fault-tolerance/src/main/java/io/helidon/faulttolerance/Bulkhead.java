@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, 2023 Oracle and/or its affiliates.
+ * Copyright (c) 2020, 2025 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,7 +20,6 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import io.helidon.builder.api.RuntimeType;
-import io.helidon.inject.api.Contract;
 
 /**
  * Bulkhead protects a resource that cannot serve unlimited parallel
@@ -31,9 +30,34 @@ import io.helidon.inject.api.Contract;
  * additional attempts to invoke will end with a failed response with
  * {@link BulkheadException}.
  */
-@Contract
 @RuntimeType.PrototypedBy(BulkheadConfig.class)
 public interface Bulkhead extends FtHandler, RuntimeType.Api<BulkheadConfig> {
+
+    /**
+     * Counter for all the calls in a bulkhead.
+     */
+    String FT_BULKHEAD_CALLS_TOTAL = "ft.bulkhead.calls.total";
+
+    /**
+     * Histogram of waiting time to enter a bulkhead.
+     */
+    String FT_BULKHEAD_WAITINGDURATION = "ft.bulkhead.waitingDuration";
+
+    /**
+     * Gauge of number of executions running at a certain time.
+     */
+    String FT_BULKHEAD_EXECUTIONSRUNNING = "ft.bulkhead.executionsRunning";
+
+    /**
+     * Gauge of number of executions waiting at a certain time.
+     */
+    String FT_BULKHEAD_EXECUTIONSWAITING = "ft.bulkhead.executionsWaiting";
+
+    /**
+     * Gauge of number of executions rejected by the bulkhead.
+     */
+    String FT_BULKHEAD_EXECUTIONSREJECTED = "ft.bulkhead.executionsRejected";
+
     /**
      * Create {@link Bulkhead} from its configuration.
      *

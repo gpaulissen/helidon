@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-    Copyright (c) 2023, 2024 Oracle and/or its affiliates.
+    Copyright (c) 2023, 2025 Oracle and/or its affiliates.
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@
     <parent>
         <artifactId>helidon-microprofile-project</artifactId>
         <groupId>io.helidon.microprofile</groupId>
-        <version>4.0.0-SNAPSHOT</version>
+        <version>4.2.0-SNAPSHOT</version>
     </parent>
     <groupId>io.helidon.microprofile.telemetry</groupId>
     <artifactId>helidon-microprofile-telemetry</artifactId>
@@ -32,7 +32,17 @@
         Support for MicroProfile Telemetry
     </description>
 
+    <properties>
+        <!-- The default for the following is 5000 ms. Reducing it speeds up tests significantly. -->
+        <otel.bsp.schedule.delay>100</otel.bsp.schedule.delay>
+        <spotbugs.exclude>etc/spotbugs/exclude.xml</spotbugs.exclude>
+    </properties>
+
     <dependencies>
+        <dependency>
+            <groupId>io.helidon.tracing</groupId>
+            <artifactId>helidon-tracing</artifactId>
+        </dependency>
         <dependency>
             <groupId>io.helidon.tracing.providers</groupId>
             <artifactId>helidon-tracing-providers-opentelemetry</artifactId>
@@ -80,13 +90,12 @@
             <artifactId>helidon-common-features-api</artifactId>
             <optional>true</optional>
         </dependency>
-        <dependency>
-            <!-- Jersey on java 9 -->
-            <groupId>jakarta.activation</groupId>
-            <artifactId>jakarta.activation-api</artifactId>
-            <scope>provided</scope>
-        </dependency>
         <!-- testing -->
+        <dependency>
+            <groupId>io.helidon.logging</groupId>
+            <artifactId>helidon-logging-jul</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>io.helidon.common.testing</groupId>
             <artifactId>helidon-common-testing-junit5</artifactId>
@@ -137,12 +146,59 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <configuration>
-                    <forkCount>1</forkCount>
-                    <reuseForks>false</reuseForks>
-                    <!-- The default for the following is 5000 ms. Reducing it significantly speeds up tests. -->
-                    <argLine>-Dotel.bsp.schedule.delay=100</argLine>
-                </configuration>
+                <executions>
+                    <execution>
+                        <id>default-test</id>
+                        <configuration>
+                            <systemPropertyVariables>
+                                <otel.bsp.schedule.delay>${otel.bsp.schedule.delay}</otel.bsp.schedule.delay>
+                                <otel.sdk.disabled>false</otel.sdk.disabled>
+                            </systemPropertyVariables>
+                            <excludes>
+                                <exclude>**/AgentDetectorTest.java</exclude>
+                                <exclude>**/TestSpanListenersWithInjection.java</exclude>
+                                <exclude>**/TestFilterSpanNesting.java</exclude>
+                            </excludes>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <!--
+                        This test does not need an active OTel SDK so run it separately to prevent it from running first
+                        and leaving other tests with a no-op Otel which will cause them to fail.
+                         -->
+                        <id>agent-detector-tests</id>
+                        <goals>
+                            <goal>test</goal>
+                        </goals>
+                        <configuration>
+                            <includes>
+                                <include>**/AgentDetectorTest.java</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>callback-enabled-injection-test</id>
+                        <goals>
+                            <goal>test</goal>
+                        </goals>
+                        <configuration>
+                            <includes>
+                                <include>**/TestSpanListenersWithInjection.java</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>filter-span-nesting-test</id>
+                        <goals>
+                            <goal>test</goal>
+                        </goals>
+                        <configuration>
+                            <includes>
+                                <include>**/TestFilterSpanNesting.java</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

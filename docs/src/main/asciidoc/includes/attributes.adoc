@@ -1,6 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////
 
-    Copyright (c) 2022, 2024 Oracle and/or its affiliates.
+    Copyright (c) 2022, 2025 Oracle and/or its affiliates.
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -23,38 +23,40 @@ ifndef::attributes-included[]
 // functional attributes
 :imagesdir: {rootdir}/images
 
-:helidon-version: 4.0.0-SNAPSHOT
+:helidon-version: 4.2.0-SNAPSHOT
 :helidon-version-is-release: false
 
 :sourcedir: {rootdir}/../java/io/helidon/docs
 
 ifeval::["{helidon-version-is-release}" != "true"]
 :helidon-github-tree-url: https://github.com/oracle/helidon/tree/main
+:helidon-github-examples-url: https://github.com/helidon-io/helidon-examples/tree/helidon-4.x/examples
 endif::[]
 
 ifeval::["{helidon-version-is-release}" == "true"]
 :helidon-github-tree-url: https://github.com/oracle/helidon/tree/{helidon-version}
+:helidon-github-examples-url: https://github.com/helidon-io/helidon-examples/tree/{helidon-version}/examples
 endif::[]
 
 // versions
 :version-plugin-helidon: 3.0.5
 
-:version-lib-microprofile-api: 6.0
+:version-lib-microprofile-api: 6.1
 
 // microprofile specifications
 :version-lib-microprofile-lra-api: 2.0
-:version-lib-microprofile-config: 3.0.3
+:version-lib-microprofile-config: 3.1
 :version-lib-microprofile-fault-tolerance-api: 4.0.2
 :version-lib-microprofile-graphql: 2.0
 :version-lib-microprofile-health: 4.0
 :version-lib-microprofile-jwt: 2.1
-:version-lib-microprofile-metrics-api: 5.0.1
-:version-lib-microprofile-openapi-api: 3.1
+:version-lib-microprofile-metrics-api: 5.1.1
+:version-lib-microprofile-openapi-api: 3.1.1
 :version-lib-microprofile-reactive-messaging-api: 3.0
 :version-lib-microprofile-rs-operators-api: 3.0
 :version-lib-microprofile-rest-client: 3.0
-:version-lib-microprofile-telemetry-tck: 1.0
-:version-lib-microprofile-telemetry: 1.0
+:version-lib-microprofile-telemetry-tck: 1.1
+:version-lib-microprofile-telemetry: 1.1
 :version-lib-microprofile-tracing: 3.0
 
 // jakarta specifications
@@ -72,6 +74,8 @@ endif::[]
 :version-lib-jakarta-inject: 2.0
 
 // 3rd party
+:version-lib-eureka: 2.0.4
+:version-lib-eureka-client: {version-lib-eureka}
 :version-lib-jaeger: 1.22
 :version-lib-hikaricp: 5.0.1
 :version-lib-eclipselink: 4.0.2
@@ -204,6 +208,7 @@ endif::[]
 :grpc-server-javadoc-base-url: {javadoc-base-url}/io.helidon.webserver.grpc
 :health-javadoc-base-url: {javadoc-base-url}/io.helidon.health.checks
 :http-javadoc-base-url: {javadoc-base-url}/io.helidon.http
+:integration-eureka-javadoc-base-url: {javadoc-base-url}/io.helidon.integrations.eureka
 :integration-oci-sdk-cdi-javadoc-base-url: {javadoc-base-url}/io.helidon.integrations.oci.sdk.cdi
 :media-jsonp-javadoc-base-url: {javadoc-base-url}/io.helidon.http.media.jsonp
 :media-jsonb-javadoc-base-url: {javadoc-base-url}/io.helidon.http.media.jsonb
@@ -213,16 +218,26 @@ endif::[]
 :metrics-serviceapi-javadoc-base-url: {javadoc-base-url}/io.helidon.metrics.serviceapi
 :micrometer-javadoc-base-url: {javadoc-base-url}/io.helidon.integrations.micrometer
 :prometheus-javadoc-base-url: {javadoc-base-url}/io.helidon.metrics.prometheus
+:mp-config-javadoc-base-url: {javadoc-base-url}/io.helidon.microprofile.config
 :mp-cors-javadoc-base-url: {javadoc-base-url}/io.helidon.microprofile.cors
+:mp-restclient-javadoc-base-url: {javadoc-base-url}/io.helidon.microprofile.restclient
 :mp-server-javadoc-base-url: {javadoc-base-url}/io.helidon.microprofile.server
 :mp-tyrus-javadoc-base-url: {javadoc-base-url}/io.helidon.microprofile.tyrus
-:mp-restclient-javadoc-base-url: {javadoc-base-url}/io.helidon.microprofile.restclient
+:mp-testing-javadoc-base-url: {javadoc-base-url}/io.helidon.microprofile.testing
+:mp-junit5-javadoc-base-url: {javadoc-base-url}/io.helidon.microprofile.testing.junit5
+:mp-mocking-javadoc-base-url: {javadoc-base-url}/io.helidon.microprofile.testing.mocking
 :openapi-javadoc-base-url: {javadoc-base-url}/io.helidon.openapi
 :openapi-ui-javadoc-base-url: {javadoc-base-url}/io.helidon.integrations.openapi.ui
 :reactive-base-url: {javadoc-base-url}/io.helidon.common.reactive
 :scheduling-javadoc-base-url: {javadoc-base-url}/io.helidon.microprofile.scheduling
 :security-integration-jersey-base-url: {javadoc-base-url}/io.helidon.security.integration.jersey
 :security-integration-webserver-base-url: {javadoc-base-url}/io.helidon.webserver.security
+:service-registry-base-url: {javadoc-base-url}/io.helidon.service.registry
+:telemetry-javadoc-base-url: {javadoc-base-url}/io.helidon.microprofile.telemetry
+:tracing-javadoc-base-url: {javadoc-base-url}/io.helidon.tracing
+:tracing-otel-provider-javadoc-base-url: {javadoc-base-url}/io.helidon.tracing.providers.opentelemetry
+:types-javadoc-base-url: {javadoc-base-url}/io.helidon.common.types
+
 :webclient-javadoc-base-url: {javadoc-base-url}/io.helidon.webclient
 :webserver-javadoc-base-url: {javadoc-base-url}/io.helidon.webserver
 :webserver-staticcontent-javadoc-base-url: {webserver-javadoc-base-url}.staticcontent
@@ -239,6 +254,7 @@ endif::[]
 :faulttolerance-javadoc-base-url: {javadoc-base-url}/io.helidon.faulttolerance
 
 // 3rd party versioned URLs
+:eureka-client-javadoc-base-url: {javadoc-io-base-url}/com.netflix.eureka/eureka-client/{version-lib-eureka-client}
 :jaeger-doc-base-url: https://www.jaegertracing.io/docs/{version-lib-jaeger}
 :hikaricp-base-url: https://github.com/brettwooldridge/HikariCP/blob/HikariCP-{version-lib-hikaricp}
 :hikaricp-javadoc-url: {javadoc-io-base-url}/com.zaxxer/HikariCP/{version-lib-hikaricp}
@@ -272,18 +288,22 @@ endif::[]
 :oracle-ucp-javadoc-base-url: https://docs.oracle.com/en/database/oracle/oracle-database/{version-lib-oracle-ucp}/jjuar
 
 :micrometer-url: https://micrometer.io
-:micrometer-api-url: https://docs.micrometer.io/micrometer/reference/concepts.html
+:micrometer-api-url: https://docs.micrometer.io/micrometer/reference/concepts
 :micrometer-javadoc-base-url: https://javadoc.io/doc/io.micrometer
 :micrometer-javadoc-registry-prometheus-base-url: {micrometer-javadoc-base-url}/micrometer-registry-prometheus/{version-lib-micrometer}/io/micrometer/prometheus
 
 // OpenAPI generator
-:openapi-generator-version: 6.2.1
+:openapi-generator-version: 7.6.0
 :openapi-generator-tool-base-url: https://github.com/OpenAPITools/openapi-generator
 :openapi-generator-site-version: v{openapi-generator-version}
 
 :openapi-generator-tool-docs-url: {openapi-generator-tool-base-url}/blob/{openapi-generator-site-version}/docs
 :openapi-generator-tool-generators-docs-url: {openapi-generator-tool-docs-url}/generators
 :openapi-generator-tool-site-url: https://openapi-generator.tech
+
+// Exposition formats for metrics
+:prometheus-exposition-format-doc-url: https://github.com/prometheus/docs/blob/main/content/docs/instrumenting/exposition_formats.md
+:openmetrics-format-doc-url: https://github.com/prometheus/OpenMetrics/blob/main/specification/OpenMetrics.md
 
 // GraalVM
 :graalvm-jdk-version: 21

@@ -1,7 +1,7 @@
 
 ///////////////////////////////////////////////////////////////////////////////
 
-    Copyright (c) 2020, 2024 Oracle and/or its affiliates.
+    Copyright (c) 2020, 2025 Oracle and/or its affiliates.
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -103,7 +103,10 @@ In order to properly configure your application using configuration sources, you
 Each Config Source has an ordinal that determines the priority of the Config Source.
 A Config Source with higher ordinal has higher priority as compared to the Config Source with
 lower ordinal. The values taken from the high-priority Config Source overrides the values
-from low-priority Config Source.
+from low-priority Config Source. The default value is 100.
+
+NOTE: In MP, the ordering is not defined for sources that have the same ordinal. 
+
 
 This helps to customize the configuration of Config Sources using external Config Source
 if an external Config Source has higher ordinal values than the built-in Config Sources of the application.
@@ -123,9 +126,14 @@ server.host=0.0.0.0
 ==== {spec-name} Profiles [[Config-Profiles]]
 
 {spec-name} supports a concept of configuration profiles. You can define a profile using the configuration property `mp.config.profile`
-(when using default configuration, this can be defined as a system property, environment variable or as a property in `microprofile-config.properties`).
-When a profile is defined, additional config source is loaded (`microprofile-config-profile.properties`) and properties from profile have precedence over
-default properties. Profile properties can be defined using `%profile` prefix, such as `%dev.server.port`.
+This can be defined as a system property, environment variable or as a property in `microprofile-config.properties` (when default configuration is used).
+When a profile is defined, an additional config source is loaded: `microprofile-config-<profile_name>.properties` and properties in the profile
+specific config source will override properties set in the default config source.
+
+You can also use profiles on a per property level.
+Profile specific properties are defined using `%<profile_name>` prefix, such as `%dev.server.port`.
+This will override the plain property `server.port`.
+For more details see link:{microprofile-config-spec-url}#_how_config_profile_works[How Config Profiles work]
 
 === Helidon {spec-name} Features
 
@@ -231,7 +239,7 @@ See xref:#Config-Profiles[Config Profiles] for more information.
 ====
 [CARD]
 .MP Config Guide
-[xref={rootdir}/mp/guides/config.adoc]
+[link=../guides/config.adoc]
 --
 Step-by-step guide about using {spec-name} in your Helidon MP application.
 --
@@ -240,4 +248,4 @@ Step-by-step guide about using {spec-name} in your Helidon MP application.
 == Reference
 
 * link:{microprofile-config-spec-url}[{spec-name} Specifications]
-* link:{microprofile-fault-tolerance-javadoc-url}[{spec-name} Javadocs]
+* link:{microprofile-config-javadoc-url}[{spec-name} Javadocs]

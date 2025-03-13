@@ -30,6 +30,7 @@ jaxb.index
 /MANIFEST.MF
 /README
 /CONTRIBUTING.md
+.crt
 .pem
 .p8
 .pkcs8.pem
@@ -37,6 +38,7 @@ jaxb.index
 .bin
 .vm
 .sql
+.crl
 src/main/proto/
 src/test/resources/keystore/
 etc/javadoc/
@@ -65,3 +67,5 @@ persistence_3_0.xsd
 src/test/resources/static/classpath/index.html
 ._java_
 ._inject_
+service.loader
+.repo

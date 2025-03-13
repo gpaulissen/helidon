@@ -50,6 +50,7 @@ import io.helidon.codegen.classmodel.Javadoc;
 import io.helidon.codegen.classmodel.Method;
 import io.helidon.common.types.TypeName;
 import io.helidon.common.types.TypeNames;
+import io.helidon.common.types.TypedElementInfo;
 
 import static io.helidon.builder.codegen.Types.COMMON_CONFIG;
 import static io.helidon.codegen.CodegenUtil.capitalize;
@@ -94,14 +95,16 @@ abstract class TypeHandlerCollection extends TypeHandler.OneTypeHandler {
     private final String collector;
     private final Optional<String> configMapper;
 
-    TypeHandlerCollection(String name,
+    TypeHandlerCollection(TypeName blueprintType,
+                          TypedElementInfo annotatedMethod,
+                          String name,
                           String getterName,
                           String setterName,
                           TypeName declaredType,
                           TypeName collectionType,
                           String collector,
                           Optional<String> configMapper) {
-        super(name, getterName, setterName, declaredType);
+        super(blueprintType, annotatedMethod, name, getterName, setterName, declaredType);
         this.collectionType = collectionType;
         this.collectionImplType = collectionImplType(collectionType);
         this.collector = collector;
@@ -236,8 +239,13 @@ abstract class TypeHandlerCollection extends TypeHandler.OneTypeHandler {
 
     @Override
     TypeName argumentTypeName() {
+        TypeName type = actualType();
+        if (TypeNames.STRING.equals(type) || toPrimitive(type).primitive() || type.array()) {
+            return declaredType();
+        }
+
         return TypeName.builder(collectionType)
-                .addTypeArgument(toWildcard(actualType()))
+                .addTypeArgument(toWildcard(type))
                 .build();
     }
 
@@ -248,7 +256,7 @@ abstract class TypeHandlerCollection extends TypeHandler.OneTypeHandler {
                  TypeName returnType,
                  Javadoc blueprintJavadoc) {
 
-        if (configured.provider()) {
+        if (configured.provider() || configured.registryService()) {
             discoverServicesSetter(classBuilder, configured, returnType, blueprintJavadoc);
         }
 
@@ -257,8 +265,11 @@ abstract class TypeHandlerCollection extends TypeHandler.OneTypeHandler {
         declaredSetters(classBuilder, configured, returnType, blueprintJavadoc);
 
         if (factoryMethods.createTargetType().isPresent()) {
-            // if there is a factory method for the return type, we also have setters for the type (probably config object)
-            factorySetter(classBuilder, configured, returnType, blueprintJavadoc, factoryMethods.createTargetType().get());
+            FactoryMethods.FactoryMethod factoryMethod = factoryMethods.createTargetType().get();
+            if (factoryMethod.factoryMethodReturnType().isList() || factoryMethod.factoryMethodReturnType().isSet()) {
+                // if there is a factory method for the return type, we also have setters for the type (probably config object)
+                factorySetter(classBuilder, configured, returnType, blueprintJavadoc, factoryMethod);
+            }
         }
 
         if (configured.singular()) {
@@ -388,6 +399,7 @@ abstract class TypeHandlerCollection extends TypeHandler.OneTypeHandler {
                 .addContent(Objects.class)
                 .addContentLine(".requireNonNull(" + singularName + ");")
                 .addContentLine("this." + name() + ".add(" + singularName + ");")
+                .update(this::extraAdderContent)
                 .addContentLine("return self();");
         classBuilder.addMethod(builder);
     }
@@ -438,6 +450,7 @@ abstract class TypeHandlerCollection extends TypeHandler.OneTypeHandler {
                 .accessModifier(setterAccessModifier(configured))
                 .addContent(Objects.class)
                 .addContentLine(".requireNonNull(" + name() + ");")
+                .update(this::extraSetterContent)
                 .addContentLine("this." + name() + ".clear();")
                 .addContentLine("this." + name() + ".addAll(" + name() + ");")
                 .addContentLine("return self();");
@@ -446,8 +459,18 @@ abstract class TypeHandlerCollection extends TypeHandler.OneTypeHandler {
         builder.name("add" + capitalize(name()))
                 .clearContent()
                 .addContentLine("Objects.requireNonNull(" + name() + ");") //Overwrites existing content
+                .update(this::extraAdderContent)
                 .addContentLine("this." + name() + ".addAll(" + name() + ");")
                 .addContentLine("return self();");
         classBuilder.addMethod(builder);
     }
+
+    Method.Builder extraSetterContent(Method.Builder builder) {
+        return builder;
+    }
+
+    Method.Builder extraAdderContent(Method.Builder builder) {
+        return builder;
+    }
+
 }

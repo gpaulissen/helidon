@@ -39,7 +39,8 @@ record PrototypeProperty(MethodSignature signature,
                          FactoryMethods factoryMethods,
                          boolean equality, // part of equals and hash code
                          boolean toStringValue, // part of toString
-                         boolean confidential // if part of toString, do not print the actual value
+                         boolean confidential, // if part of toString, do not print the actual value,
+                         boolean registryService
 ) {
     // cannot be identifiers - such as field name or method name
     private static final Set<String> RESERVED_WORDS = Set.of(
@@ -78,7 +79,13 @@ record PrototypeProperty(MethodSignature signature,
 
         boolean sameGeneric = element.hasAnnotation(Types.OPTION_SAME_GENERIC);
         // to help with defaults, setters, config mapping etc.
-        TypeHandler typeHandler = TypeHandler.create(name, getterName, setterName, returnType, sameGeneric);
+        TypeHandler typeHandler = TypeHandler.create(blueprint.typeName(),
+                                                     element,
+                                                     name,
+                                                     getterName,
+                                                     setterName,
+                                                     returnType,
+                                                     sameGeneric);
 
         // all information from @ConfiguredOption annotation
         AnnotationDataOption configuredOption = AnnotationDataOption.create(typeHandler, element);
@@ -95,6 +102,7 @@ record PrototypeProperty(MethodSignature signature,
         boolean equality = !redundantAnnotation.flatMap(it -> it.getValue("equality"))
                 .map(Boolean::parseBoolean)
                 .orElse(false);
+        boolean registryService = element.hasAnnotation(Types.OPTION_REGISTRY_SERVICE);
 
         return new PrototypeProperty(
                 MethodSignature.create(element),
@@ -103,7 +111,8 @@ record PrototypeProperty(MethodSignature signature,
                 factoryMethods,
                 equality,
                 toStringValue,
-                confidential
+                confidential,
+                registryService
         );
     }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, 2022 Oracle and/or its affiliates.
+ * Copyright (c) 2019, 2024 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@ import java.util.List;
 import java.util.Optional;
 import java.util.ServiceLoader;
 import java.util.Set;
-import java.util.function.Function;
 
 import io.helidon.common.HelidonServiceLoader;
 import io.helidon.common.media.type.MediaType;
@@ -88,12 +87,15 @@ public final class MetaConfig {
         SUPPORTED_SUFFIXES = List.copyOf(supportedSuffixes);
     }
 
-    private MetaConfig() {
+    private final Config metaConfig;
+
+    MetaConfig() {
+        this.metaConfig = metaConfig().orElseGet(Config::empty);
     }
 
     /**
      * Create configuration from meta configuration (files or classpath resources), or create a default config instance
-     *  if meta configuration is not present.
+     * if meta configuration is not present.
      *
      * @return a config instance
      */
@@ -173,7 +175,8 @@ public final class MetaConfig {
     /**
      * Load a config source (or config sources) based on its meta configuration.
      * The metaConfig must contain a key {@code type} that defines the type of the source to be found via providers, and
-     *   a key {@code properties} with configuration of the config sources
+     * a key {@code properties} with configuration of the config sources
+     *
      * @param sourceMetaConfig meta configuration of a config source
      * @return config source instance
      * @see Config.Builder#config(Config)
@@ -201,7 +204,6 @@ public final class MetaConfig {
 
             return List.of(source);
         }
-
     }
 
     // override config source
@@ -228,16 +230,13 @@ public final class MetaConfig {
         return configSources;
     }
 
-    // only interested in config source
-    static List<ConfigSource> configSources(Function<MediaType, Boolean> supportedMediaType, List<String> supportedSuffixes) {
-        Optional<Config> metaConfigOpt = metaConfig();
-
-        return metaConfigOpt
-                .map(MetaConfig::configSources)
-                .orElseGet(() -> MetaConfigFinder.findConfigSource(supportedMediaType, supportedSuffixes)
-                        .map(List::of)
-                        .orElseGet(List::of));
-
+    /**
+     * Meta configuration if provided, or empty config if not.
+     *
+     * @return meta configuration
+     */
+    public Config metaConfiguration() {
+        return this.metaConfig;
     }
 
     private static Config createDefault() {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, 2024 Oracle and/or its affiliates.
+ * Copyright (c) 2020, 2025 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ import java.util.Set;
 import java.util.StringTokenizer;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
-import java.util.logging.Logger;
 
 import io.helidon.common.config.Config;
 import io.helidon.common.uri.UriInfo;
@@ -53,15 +52,17 @@ import static java.lang.Character.isDigit;
  */
 public class CorsSupportHelper<Q, R> {
 
-    static final int SUCCESS_RANGE = 300;
     static final String ORIGIN_DENIED = "CORS origin is denied";
     static final String ORIGIN_NOT_IN_ALLOWED_LIST = "CORS origin is not in allowed list";
     static final String METHOD_NOT_IN_ALLOWED_LIST = "CORS method is not in allowed list";
     static final String HEADERS_NOT_IN_ALLOWED_LIST = "CORS headers not in allowed list";
 
-    static final Logger LOGGER = Logger.getLogger(CorsSupportHelper.class.getName());
+    static final System.Logger LOGGER = System.getLogger(CorsSupportHelper.class.getName());
+
+    static final String OPAQUE_ORIGIN = "null"; // browsers might send this as Origin header if origin info is untrusted
 
     private static final Supplier<Optional<CrossOriginConfig>> EMPTY_SECONDARY_SUPPLIER = Optional::empty;
+
 
     private final String name;
 
@@ -237,7 +238,10 @@ public class CorsSupportHelper<Q, R> {
 
             CorsSupportHelper<Q, R>  result = new CorsSupportHelper<>(this);
 
-            LOGGER.config(() -> String.format("CorsSupportHelper configured as: %s", result.toString()));
+            if (LOGGER.isLoggable(System.Logger.Level.DEBUG)) {
+                LOGGER.log(System.Logger.Level.DEBUG,
+                           () -> String.format("CorsSupportHelper configured as: %s", result));
+            }
 
             return result;
         }
@@ -392,7 +396,7 @@ public class CorsSupportHelper<Q, R> {
 
             return new RequestTypeInfo(originLocation,
                                        hostLocation,
-                                       originLocation.equals(hostLocation));
+                                       originLocation.equals(hostLocation) || originLocation.equals(OPAQUE_ORIGIN));
         }
     }
 
@@ -405,6 +409,10 @@ public class CorsSupportHelper<Q, R> {
             LogHelper.logIsRequestTypeNormalNoOrigin(silent, requestAdapter);
             return true;
         }
+        if (isOriginOpaque(originOpt.get())) {
+            LogHelper.logOpaqueOrigin(silent, requestAdapter);
+            // Do not return. Continue processing having noted the opaque origin.
+        }
 
         RequestTypeInfo result = requestType(originOpt.get(), requestAdapter.requestedUri());
         LogHelper.logIsRequestTypeNormal(result.isNormal,
@@ -416,12 +424,16 @@ public class CorsSupportHelper<Q, R> {
         return result.isNormal;
     }
 
+    static boolean isOriginOpaque(String origin) {
+        return origin.equals(OPAQUE_ORIGIN);
+    }
+
     private static String originLocation(String origin) {
         int originEndOfScheme = origin.indexOf(':');
         int originLastColon = origin.lastIndexOf(':');
 
         return origin + (
-                (originEndOfScheme == originLastColon)
+                (originEndOfScheme == originLastColon && originEndOfScheme >= 0)
                         ? ":" + portForScheme(origin.substring(0, originEndOfScheme))
                         : "");
     }

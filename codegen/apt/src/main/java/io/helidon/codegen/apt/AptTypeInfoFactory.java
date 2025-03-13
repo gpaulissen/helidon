@@ -30,6 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.AnnotationValue;
@@ -64,7 +65,13 @@ import static java.util.function.Predicate.not;
 
 /**
  * Factory to analyze processed types and to provide {@link io.helidon.common.types.TypeInfo} for them.
+ *
+ * @deprecated this is an internal API, all usage should be done through {@code helidon-codegen} APIs,
+ *         such as {@link io.helidon.codegen.CodegenContext#typeInfo(io.helidon.common.types.TypeName)};
+ *         this type will be package local in the future
  */
+@SuppressWarnings("removal")
+@Deprecated(forRemoval = true)
 public final class AptTypeInfoFactory extends TypeInfoFactoryBase {
 
     // we expect that annotations themselves are not code generated, and can be cached
@@ -116,7 +123,10 @@ public final class AptTypeInfoFactory extends TypeInfoFactoryBase {
      * @return type info for the type element
      * @throws IllegalArgumentException when the element cannot be resolved into type info (such as if you ask for
      *                                  a primitive type)
+     * @deprecated this is an internal API, all usage should be done through {@code helidon-codegen} APIs,
+     *         such as {@link io.helidon.codegen.CodegenContext#typeInfo(io.helidon.common.types.TypeName)}
      */
+    @Deprecated(forRemoval = true)
     public static Optional<TypeInfo> create(AptContext ctx,
                                             TypeElement typeElement) {
 
@@ -152,11 +162,144 @@ public final class AptTypeInfoFactory extends TypeInfoFactoryBase {
      * {@link io.helidon.common.types.ElementKind#CONSTRUCTOR}, or {@link io.helidon.common.types.ElementKind#PARAMETER}
      * then this method may return empty.
      *
+     * @param ctx           annotation processing context
+     * @param processedType the type that is being processed, to avoid infinite loop when looking for inherited annotations
+     * @param v             the element (from annotation processing)
+     * @param elements      the elements
+     * @return the created instance
+     */
+    public static Optional<TypedElementInfo> createTypedElementInfoFromElement(AptContext ctx,
+                                                                               TypeName processedType,
+                                                                               Element v,
+                                                                               Elements elements) {
+        TypeName type = AptTypeFactory.createTypeName(v).orElse(null);
+        TypeMirror typeMirror = null;
+        String defaultValue = null;
+        List<TypedElementInfo> params = List.of();
+        List<TypeName> componentTypeNames = List.of();
+        List<Annotation> elementTypeAnnotations = List.of();
+
+        Set<String> modifierNames = v.getModifiers()
+                .stream()
+                .map(Modifier::toString)
+                .collect(Collectors.toSet());
+        Set<TypeName> thrownChecked = Set.of();
+        List<TypeName> typeParameters = new ArrayList<>();
+
+        if (v instanceof ExecutableElement ee) {
+            typeMirror = Objects.requireNonNull(ee.getReturnType());
+            params = ee.getParameters()
+                    .stream()
+                    .map(it -> createTypedElementInfoFromElement(ctx, processedType, it, elements).orElseThrow(() -> {
+                        return new CodegenException("Failed to create element info for parameter: " + it + ", either it uses "
+                                                            + "invalid type, or it was removed by an element mapper. This would"
+                                                            + " result in an invalid TypeInfo model.",
+                                                    it);
+                    }))
+                    .toList();
+            AnnotationValue annotationValue = ee.getDefaultValue();
+            defaultValue = (annotationValue == null) ? null
+                    : String.valueOf(annotationValue.accept(new ToAnnotationValueVisitor(elements)
+                                                                    .mapBooleanToNull(true)
+                                                                    .mapVoidToNull(true)
+                                                                    .mapBlankArrayToNull(true)
+                                                                    .mapEmptyStringToNull(true)
+                                                                    .mapToSourceDeclaration(true), null));
+
+            thrownChecked = ee.getThrownTypes()
+                    .stream()
+                    .filter(it -> isCheckedException(ctx, it))
+                    .flatMap(it -> AptTypeFactory.createTypeName(it).stream())
+                    .collect(Collectors.toSet());
+
+            var elementTypeParameters = ee.getTypeParameters();
+            if (!elementTypeParameters.isEmpty()) {
+                // we need to keep the formal order and number of type parameters; if we cannot create it, just use error
+                elementTypeParameters.stream()
+                        .map(AptTypeFactory::createTypeName)
+                        .flatMap(it -> it.isPresent()
+                                ? it.stream()
+                                : Stream.of(TypeName.createFromGenericDeclaration("error")))
+                        .forEach(typeParameters::add);
+            }
+        } else if (v instanceof VariableElement ve) {
+            typeMirror = Objects.requireNonNull(ve.asType());
+        }
+
+        if (typeMirror != null) {
+            if (type == null) {
+                Element element = ctx.aptEnv().getTypeUtils().asElement(typeMirror);
+                if (element instanceof TypeElement typeElement) {
+                    type = AptTypeFactory.createTypeName(typeElement, typeMirror)
+                            .orElse(createFromGenericDeclaration(typeMirror.toString()));
+                } else {
+                    type = AptTypeFactory.createTypeName(typeMirror)
+                            .orElse(createFromGenericDeclaration(typeMirror.toString()));
+                }
+            }
+            if (typeMirror instanceof DeclaredType) {
+                List<? extends TypeMirror> args = ((DeclaredType) typeMirror).getTypeArguments();
+                componentTypeNames = args.stream()
+                        .map(AptTypeFactory::createTypeName)
+                        .filter(Optional::isPresent)
+                        .map(Optional::orElseThrow)
+                        .collect(Collectors.toList());
+                elementTypeAnnotations =
+                        createAnnotations(ctx, ((DeclaredType) typeMirror).asElement(), elements);
+            }
+        }
+        String javadoc = ctx.aptEnv().getElementUtils().getDocComment(v);
+        javadoc = javadoc == null || javadoc.isBlank() ? "" : javadoc;
+
+        List<Annotation> annotations = createAnnotations(ctx, v, elements);
+        List<Annotation> inheritedAnnotations = createInheritedAnnotations(ctx, processedType.genericTypeName(), annotations);
+
+        TypedElementInfo.Builder builder = TypedElementInfo.builder()
+                .description(javadoc)
+                .typeName(type)
+                .componentTypes(componentTypeNames)
+                .elementName(v.getSimpleName().toString())
+                .kind(kind(v.getKind()))
+                .annotations(annotations)
+                .elementTypeAnnotations(elementTypeAnnotations)
+                .inheritedAnnotations(inheritedAnnotations)
+                .elementModifiers(modifiers(ctx, modifierNames))
+                .accessModifier(accessModifier(modifierNames))
+                .throwsChecked(thrownChecked)
+                .parameterArguments(params)
+                .typeParameters(typeParameters)
+                .originatingElement(v);
+
+        // To be failure-tolerant, as the ECJ may not provide an enclosing element for a VariableElement.
+        Element enclosingElement = v.getEnclosingElement();
+        if (enclosingElement != null) {
+            AptTypeFactory.createTypeName(enclosingElement).ifPresent(builder::enclosingType);
+        }
+
+        Optional.ofNullable(defaultValue).ifPresent(builder::defaultValue);
+
+        return mapElement(ctx, builder.build());
+    }
+
+    /**
+     * Creates an instance of a {@link io.helidon.common.types.TypedElementInfo} given its type and variable element from
+     * annotation processing. If the passed in element is not a {@link io.helidon.common.types.ElementKind#FIELD},
+     * {@link io.helidon.common.types.ElementKind#METHOD},
+     * {@link io.helidon.common.types.ElementKind#CONSTRUCTOR}, or {@link io.helidon.common.types.ElementKind#PARAMETER}
+     * then this method may return empty.
+     * <p>
+     * This method does not include inherited annotations.
+     *
      * @param ctx      annotation processing context
      * @param v        the element (from annotation processing)
      * @param elements the elements
      * @return the created instance
+     * @deprecated use
+     *         {@link #createTypedElementInfoFromElement(AptContext, io.helidon.common.types.TypeName,
+     *         javax.lang.model.element.Element, javax.lang.model.util.Elements)}
+     *         instead
      */
+    @Deprecated(since = "4.0.10", forRemoval = true)
     public static Optional<TypedElementInfo> createTypedElementInfoFromElement(AptContext ctx,
                                                                                Element v,
                                                                                Elements elements) {
@@ -277,6 +420,19 @@ public final class AptTypeInfoFactory extends TypeInfoFactoryBase {
             // Object is not to be analyzed
             return Optional.empty();
         }
+
+        if (elementPredicate == ElementInfoPredicates.ALL_PREDICATE) {
+            // we can safely cache
+            return ctx.cache(typeName, () -> createUncached(ctx, typeElement, elementPredicate, typeName));
+        }
+
+        return createUncached(ctx, typeElement, elementPredicate, typeName);
+    }
+
+    private static Optional<TypeInfo> createUncached(AptContext ctx,
+                                                     TypeElement typeElement,
+                                                     Predicate<TypedElementInfo> elementPredicate,
+                                                     TypeName typeName) {
         TypeName genericTypeName = typeName.genericTypeName();
         Set<TypeName> allInterestingTypeNames = new LinkedHashSet<>();
         allInterestingTypeNames.add(genericTypeName);
@@ -289,10 +445,17 @@ public final class AptTypeInfoFactory extends TypeInfoFactoryBase {
 
         Elements elementUtils = ctx.aptEnv().getElementUtils();
         try {
-            List<Annotation> annotations =
-                    List.copyOf(createAnnotations(ctx,
-                                                  elementUtils.getTypeElement(genericTypeName.resolvedName()),
-                                                  elementUtils));
+            TypeElement foundType = elementUtils.getTypeElement(genericTypeName.resolvedName());
+            if (foundType == null) {
+                // this is probably forward referencing a generated type, ignore
+                return Optional.empty();
+            }
+            TypeName declaredTypeName = declaredTypeName(ctx, genericTypeName);
+            List<Annotation> annotations = createAnnotations(ctx,
+                                                             foundType,
+                                                             elementUtils);
+            List<Annotation> inheritedAnnotations = createInheritedAnnotations(ctx, genericTypeName, annotations);
+
             Set<TypeName> annotationsOnTypeOrElements = new HashSet<>();
             annotations.stream()
                     .map(Annotation::typeName)
@@ -302,30 +465,23 @@ public final class AptTypeInfoFactory extends TypeInfoFactoryBase {
             List<TypedElementInfo> otherElements = new ArrayList<>();
             typeElement.getEnclosedElements()
                     .stream()
-                    .flatMap(it -> createTypedElementInfoFromElement(ctx, it, elementUtils).stream())
-                    .forEach(it -> {
-                        if (elementPredicate.test(it)) {
-                            elementsWeCareAbout.add(it);
-                        } else {
-                            otherElements.add(it);
-                        }
-                        annotationsOnTypeOrElements.addAll(it.annotations()
-                                                                   .stream()
-                                                                   .map(Annotation::typeName)
-                                                                   .collect(Collectors.toSet()));
-                        it.parameterArguments()
-                                .forEach(arg -> annotationsOnTypeOrElements.addAll(arg.annotations()
-                                                                                           .stream()
-                                                                                           .map(Annotation::typeName)
-                                                                                           .collect(Collectors.toSet())));
-                    });
+                    .flatMap(it -> createTypedElementInfoFromElement(ctx, genericTypeName, it, elementUtils).stream())
+                    .forEach(it -> collectEnclosedElements(elementPredicate,
+                                                           elementsWeCareAbout,
+                                                           otherElements,
+                                                           annotationsOnTypeOrElements,
+                                                           it));
+
 
             Set<String> modifiers = toModifierNames(typeElement.getModifiers());
             TypeInfo.Builder builder = TypeInfo.builder()
                     .originatingElement(typeElement)
                     .typeName(typeName)
+                    .rawType(genericTypeName)
+                    .declaredType(declaredTypeName)
                     .kind(kind(typeElement.getKind()))
                     .annotations(annotations)
+                    .inheritedAnnotations(inheritedAnnotations)
                     .elementModifiers(modifiers(ctx, modifiers))
                     .accessModifier(accessModifier(modifiers))
                     .elementInfo(elementsWeCareAbout)
@@ -415,6 +571,33 @@ public final class AptTypeInfoFactory extends TypeInfoFactoryBase {
         }
     }
 
+    private static TypeName declaredTypeName(AptContext ctx, TypeName typeName) {
+        TypeElement typeElement = ctx.aptEnv().getElementUtils().getTypeElement(typeName.fqName());
+        // we know this type exists, we do not have to check for null
+        return AptTypeFactory.createTypeName(typeElement.asType()).orElseThrow();
+    }
+
+    private static void collectEnclosedElements(Predicate<TypedElementInfo> elementPredicate,
+                                                List<TypedElementInfo> elementsWeCareAbout,
+                                                List<TypedElementInfo> otherElements,
+                                                Set<TypeName> annotationsOnTypeOrElements,
+                                                TypedElementInfo enclosedElement) {
+        if (elementPredicate.test(enclosedElement)) {
+            elementsWeCareAbout.add(enclosedElement);
+        } else {
+            otherElements.add(enclosedElement);
+        }
+        annotationsOnTypeOrElements.addAll(enclosedElement.annotations()
+                                                   .stream()
+                                                   .map(Annotation::typeName)
+                                                   .collect(Collectors.toSet()));
+        enclosedElement.parameterArguments()
+                .forEach(arg -> annotationsOnTypeOrElements.addAll(arg.annotations()
+                                                                           .stream()
+                                                                           .map(Annotation::typeName)
+                                                                           .collect(Collectors.toSet())));
+    }
+
     private static AccessModifier accessModifier(Set<String> stringModifiers) {
         for (String stringModifier : stringModifiers) {
             try {
@@ -434,6 +617,69 @@ public final class AptTypeInfoFactory extends TypeInfoFactoryBase {
                 .flatMap(it -> mapAnnotation(ctx, it, elementKind).stream())
                 .filter(TypeInfoFactoryBase::annotationFilter)
                 .toList();
+    }
+
+    private static List<Annotation> createInheritedAnnotations(AptContext ctx,
+                                                               TypeName processedType,
+                                                               List<Annotation> elementAnnotations) {
+        List<Annotation> result = new ArrayList<>();
+        Set<TypeName> processedTypes = new HashSet<>();
+
+        // for each annotation on this type, find its type info, and collect all meta annotations marked as @Inherited
+        for (Annotation elementAnnotation : elementAnnotations) {
+            if (processedType.equals(elementAnnotation.typeName())) {
+                // self reference
+                continue;
+            }
+            addInherited(ctx, result, processedTypes, elementAnnotation, false);
+        }
+        return result;
+    }
+
+    private static void addInherited(AptContext ctx,
+                                     List<Annotation> result,
+                                     Set<TypeName> processedTypes,
+                                     Annotation annotation,
+                                     boolean shouldAdd) {
+        TypeName annotationType = annotation.typeName();
+        if (!processedTypes.add(annotationType)) {
+            return;
+        }
+
+        if (!annotationFilter(annotation)) {
+            return;
+        }
+
+        if (annotationType.equals(TypeNames.INHERITED)) {
+            return;
+        }
+
+        Optional<TypeInfo> found = create(ctx, annotationType, it -> false);
+
+        if (found.isEmpty()) {
+            ctx.logger().log(System.Logger.Level.DEBUG, "Annotation " + annotationType
+                    + " not available, cannot obtain inherited annotations");
+            return;
+        }
+
+        TypeInfo annoTypeInfo = found.get();
+
+        if (annoTypeInfo.hasAnnotation(TypeNames.INHERITED)) {
+            // first level annotations should not be added as inherited
+            if (shouldAdd) {
+                // add this annotation
+                result.add(annotation);
+            }
+
+            // check my meta annotations
+            for (Annotation metaAnnotation : annoTypeInfo.annotations()) {
+                // if self annotated, ignore
+                if (annotationType.equals(metaAnnotation.typeName())) {
+                    continue;
+                }
+                addInherited(ctx, result, processedTypes, metaAnnotation, true);
+            }
+        }
     }
 
     /**
@@ -465,7 +711,8 @@ public final class AptTypeInfoFactory extends TypeInfoFactoryBase {
         moduleName.set(null);
 
         ModuleElement module = ctx.aptEnv().getElementUtils().getModuleOf(type);
-        if (!module.isUnnamed()) {
+
+        if (module != null && !module.isUnnamed()) {
             String name = module.getQualifiedName().toString();
             if (hasValue(name)) {
                 moduleName.set(name);

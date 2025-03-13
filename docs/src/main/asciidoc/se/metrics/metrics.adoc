@@ -1,6 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////
 
-    Copyright (c) 2018, 2024 Oracle and/or its affiliates.
+    Copyright (c) 2018, 2025 Oracle and/or its affiliates.
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -45,6 +45,7 @@ include::{rootdir}/includes/se.adoc[]
 ** <<Example Application Code, Example Application Code>>
 ** <<Example Configuration, Example Configuration>>
  - <<Additional Information, Additional Information>>
+** <<References, References>>
 ** <<Support for the Prometheus Metrics API, Support for the Prometheus Metrics API>>
 
 == Overview
@@ -180,6 +181,15 @@ Your code can then operate on the returned meter as needed to record new measure
 
 The example code in the <<Examples>> section below illustrates how to register, retrieve, and update meters.
 
+=== Accessing the Underlying Implementation: `unwrap`
+The neutral Helidon metrics API is an abstraction of common metrics behavior independent from any given implementation. As such, we intentionally excluded some implementation-specific behavior from the API.
+
+Sometimes you might want access to methods that are present in a particular metrics implementation but not in the Helidon API. Helidon allows that via the `unwrap` method on the meter types and on their builders. Each full implementation of the Helidon meter types and their builders refers to a delegate meter or delegate builder internally. The `unwrap` method lets you obtain the delegate, cast to the type you want.
+
+Of course, using this technique binds your code to a particular metrics implementation.
+
+The link:{metrics-javadoc-base-url}/io/helidon/metrics/api/Wrapper.html[`Wrapper`] interface declares the `unwrap` method which accepts a class parameter to which the delegate is cast. You can then invoke any method declared on the implementation-specific type.
+
 // Here's Configuration.
 include::{rootdir}/includes/metrics/metrics-config.adoc[tag=config-intro]
 
@@ -260,6 +270,12 @@ accessctr_total{scope="application",} 1.0 # <1>
 include::{rootdir}/includes/metrics/metrics-config.adoc[tag=config-examples]
 
 == Additional Information
+
+=== References
+
+link:{micrometer-api-url}[Micrometer Metrics concepts documentation]
+
+include::{rootdir}/includes/metrics/metrics-shared.adoc[tag=format-refcs-no-heading]
 
 === Support for the Prometheus Metrics API
 - <<Maven Coordinates, Maven Coordinates>>

@@ -203,7 +203,24 @@ record TypeContext(
                 .className("Builder")
                 .build();
 
-        TypeInformation typeInformation = new TypeInformation(blueprint,
+        /*
+        Service registry is supported if it is explicitly configured && a provider exists,
+        or there is an option annotated with @Option.RegistryService
+         */
+        boolean supportsServiceRegistry = blueprint.findAnnotation(Types.PROTOTYPE_SERVICE_REGISTRY)
+                .flatMap(Annotation::booleanValue)
+                .orElse(false)
+                && blueprint.elementInfo()
+                .stream()
+                .filter(ElementInfoPredicates::isMethod)
+                .anyMatch(ElementInfoPredicates.hasAnnotation(Types.OPTION_PROVIDER));
+        supportsServiceRegistry |= blueprint.elementInfo()
+                        .stream()
+                        .filter(ElementInfoPredicates::isMethod)
+                        .anyMatch(ElementInfoPredicates.hasAnnotation(Types.OPTION_REGISTRY_SERVICE));
+
+        TypeInformation typeInformation = new TypeInformation(supportsServiceRegistry,
+                                                              blueprint,
                                                               prototype,
                                                               prototypeBuilder,
                                                               prototypeImpl,
@@ -407,6 +424,7 @@ record TypeContext(
     }
 
     record TypeInformation(
+            boolean supportsServiceRegistry,
             TypeInfo blueprintType,
             TypeName prototype,
             TypeName prototypeBuilder,

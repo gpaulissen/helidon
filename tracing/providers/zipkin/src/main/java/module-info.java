@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2023 Oracle and/or its affiliates.
+ * Copyright (c) 2018, 2024 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,14 +27,13 @@ import io.helidon.common.features.api.HelidonFlavor;
 )
 @SuppressWarnings({ "requires-automatic", "requires-transitive-automatic" })
 module io.helidon.tracing.providers.zipkin {
-
     requires brave.opentracing;
     requires brave;
     requires io.helidon.common;
+    requires io.helidon.common.context;
     requires io.helidon.tracing.providers.opentracing;
     requires io.opentracing.noop;
     requires io.opentracing.util;
-    requires java.logging;
 
     requires static io.helidon.common.features.api;
     requires static io.helidon.config.metadata;
@@ -48,7 +47,11 @@ module io.helidon.tracing.providers.zipkin {
 
     exports io.helidon.tracing.providers.zipkin;
 
+    uses io.helidon.tracing.SpanListener;
+
     provides io.helidon.tracing.providers.opentracing.spi.OpenTracingProvider
             with io.helidon.tracing.providers.zipkin.ZipkinTracerProvider;
 
+    provides io.helidon.common.context.spi.DataPropagationProvider
+            with io.helidon.tracing.providers.zipkin.ZipkinDataPropagationProvider;
 }

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-    Copyright (c) 2019, 2024 Oracle and/or its affiliates.
+    Copyright (c) 2019, 2025 Oracle and/or its affiliates.
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@
     <parent>
         <groupId>io.helidon.tracing.providers</groupId>
         <artifactId>helidon-tracing-providers-project</artifactId>
-        <version>4.0.0-SNAPSHOT</version>
+        <version>4.2.0-SNAPSHOT</version>
     </parent>
 
     <artifactId>helidon-tracing-providers-jaeger</artifactId>
@@ -99,15 +99,24 @@
             <artifactId>helidon-config-metadata</artifactId>
             <optional>true</optional>
         </dependency>
-        <dependency>
-            <groupId>io.helidon.config</groupId>
-            <artifactId>helidon-config-metadata-processor</artifactId>
-            <optional>true</optional>
-        </dependency>
 
         <!--
          - Test dependencies
          -->
+
+        <!-- OTel dependencies needed to get fully-functional propagators -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk-extension-autoconfigure</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-otlp</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- -->
+
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-api</artifactId>
@@ -128,27 +137,95 @@
             <artifactId>helidon-config-yaml</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>io.helidon.common.testing</groupId>
+            <artifactId>helidon-common-testing-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <!-- Separate some of the tests to avoid interference with other tests -->
+                <executions>
+                    <execution>
+                        <id>default-test</id>
+                        <configuration>
+                            <excludes>**/JaegerBaggagePropagationTest.java,**/JaegerTracerBuilderTest.java</excludes>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>baggage-propagation-test</id>
+                        <goals>
+                            <goal>test</goal>
+                        </goals>
+                        <configuration>
+                            <properties>
+                                <configurationParameters>
+                                    junit.jupiter.extensions.autodetection.enabled = true
+                                </configurationParameters>
+                            </properties>
+                            <includes>**/JaegerBaggagePropagationTest.java</includes>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>tracer-builder-tests</id>
+                        <goals>
+                            <goal>test</goal>
+                        </goals>
+                        <configuration>
+                            <properties>
+                                <configurationParameters>
+                                    junit.jupiter.extensions.autodetection.enabled = true
+                                </configurationParameters>
+                            </properties>
+                            <includes>**/JaegerTracerBuilderTest.java</includes>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <configuration>
                     <annotationProcessorPaths>
+                        <path>
+                            <groupId>io.helidon.codegen</groupId>
+                            <artifactId>helidon-codegen-apt</artifactId>
+                            <version>${helidon.version}</version>
+                        </path>
                         <path>
                             <groupId>io.helidon.common.features</groupId>
                             <artifactId>helidon-common-features-processor</artifactId>
                             <version>${helidon.version}</version>
                         </path>
                         <path>
-                            <groupId>io.helidon.config</groupId>
-                            <artifactId>helidon-config-metadata-processor</artifactId>
+                            <groupId>io.helidon.config.metadata</groupId>
+                            <artifactId>helidon-config-metadata-codegen</artifactId>
                             <version>${helidon.version}</version>
                         </path>
                     </annotationProcessorPaths>
                 </configuration>
+                <dependencies>
+                    <dependency>
+                        <groupId>io.helidon.codegen</groupId>
+                        <artifactId>helidon-codegen-apt</artifactId>
+                        <version>${helidon.version}</version>
+                    </dependency>
+                    <dependency>
+                        <groupId>io.helidon.common.features</groupId>
+                        <artifactId>helidon-common-features-processor</artifactId>
+                        <version>${helidon.version}</version>
+                    </dependency>
+                    <dependency>
+                        <groupId>io.helidon.config.metadata</groupId>
+                        <artifactId>helidon-config-metadata-codegen</artifactId>
+                        <version>${helidon.version}</version>
+                    </dependency>
+                </dependencies>
             </plugin>
         </plugins>
     </build>

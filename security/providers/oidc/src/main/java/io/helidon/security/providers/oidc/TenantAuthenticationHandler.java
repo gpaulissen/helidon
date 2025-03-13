@@ -17,6 +17,7 @@
 package io.helidon.security.providers.oidc;
 
 import java.io.StringReader;
+import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
@@ -37,6 +38,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import io.helidon.common.Errors;
+import io.helidon.common.LazyValue;
 import io.helidon.common.parameters.Parameters;
 import io.helidon.http.HeaderNames;
 import io.helidon.http.HeaderValues;
@@ -58,6 +60,7 @@ import io.helidon.security.abac.scope.ScopeValidator;
 import io.helidon.security.jwt.Jwt;
 import io.helidon.security.jwt.JwtException;
 import io.helidon.security.jwt.JwtUtil;
+import io.helidon.security.jwt.JwtValidator;
 import io.helidon.security.jwt.SignedJwt;
 import io.helidon.security.jwt.jwk.JwkKeys;
 import io.helidon.security.providers.common.TokenCredential;
@@ -82,7 +85,10 @@ class TenantAuthenticationHandler {
     private static final System.Logger LOGGER = System.getLogger(TenantAuthenticationHandler.class.getName());
     private static final TokenHandler PARAM_HEADER_HANDLER = TokenHandler.forHeader(OidcConfig.PARAM_HEADER_NAME);
     private static final TokenHandler PARAM_ID_HEADER_HANDLER = TokenHandler.forHeader(OidcConfig.PARAM_ID_HEADER_NAME);
-    private static final SecureRandom RANDOM = new SecureRandom();
+    private static final LazyValue<SecureRandom> RANDOM = LazyValue.create(SecureRandom::new);
+    private static final JwtValidator TIME_VALIDATORS = JwtValidator.builder()
+            .addDefaultTimeValidators()
+            .build();
 
     private final boolean optional;
     private final OidcConfig oidcConfig;
@@ -415,8 +421,8 @@ class TenantAuthenticationHandler {
         for (Map.Entry<String, List<String>> entry : env.headers().entrySet()) {
             if (entry.getKey().equalsIgnoreCase("host") && !entry.getValue().isEmpty()) {
                 String firstHost = entry.getValue().getFirst();
-                return oidcConfig.redirectUriWithHost(oidcConfig.forceHttpsRedirects() ? "https" : env.transport()
-                        + "://" + firstHost);
+                String schema = oidcConfig.forceHttpsRedirects() ? "https" : env.transport();
+                return oidcConfig.redirectUriWithHost(schema + "://" + firstHost);
             }
         }
 
@@ -478,12 +484,19 @@ class TenantAuthenticationHandler {
         return "Bearer realm=\"" + tenantConfig.realm() + "\", error=\"" + code + "\", error_description=\"" + description + "\"";
     }
 
-    private String origUri(ProviderRequest providerRequest) {
+    String origUri(ProviderRequest providerRequest) {
         List<String> origUri = providerRequest.env().headers()
                 .getOrDefault(Security.HEADER_ORIG_URI, List.of());
 
         if (origUri.isEmpty()) {
-            origUri = List.of(providerRequest.env().targetUri().getPath());
+            URI targetUri = providerRequest.env().targetUri();
+            String query = targetUri.getQuery();
+            String path = targetUri.getPath();
+            if (query == null || query.isEmpty()) {
+                return path;
+            } else {
+                return path + "?" + query;
+            }
         }
 
         return origUri.getFirst();
@@ -513,9 +526,19 @@ class TenantAuthenticationHandler {
                 errors = Errors.collector().collect();
             }
             Jwt jwt = signedJwt.getJwt();
-            Errors validationErrors = jwt.validate(tenant.issuer(),
-                                                   tenantConfig.clientId(),
-                                                   true);
+
+            JwtValidator.Builder jwtValidatorBuilder = JwtValidator.builder()
+                    .addDefaultTimeValidators()
+                    .addCriticalValidator()
+                    .addUserPrincipalValidator()
+                    .addAudienceValidator(tenantConfig.clientId());
+
+            if (tenant.issuer() != null) {
+                jwtValidatorBuilder.addIssuerValidator(tenant.issuer());
+            }
+
+            JwtValidator jwtValidation = jwtValidatorBuilder.build();
+            Errors validationErrors = jwtValidation.validate(jwt);
 
             if (errors.isValid() && validationErrors.isValid()) {
                 return processAccessToken(tenantId, providerRequest, jwt);
@@ -560,7 +583,7 @@ class TenantAuthenticationHandler {
             } else {
                 collector = Errors.collector();
             }
-            Errors timeErrors = signedJwt.getJwt().validate(Jwt.defaultTimeValidators());
+            Errors timeErrors = TIME_VALIDATORS.validate(signedJwt.getJwt());
             if (timeErrors.isValid()) {
                 return processValidationResult(providerRequest, signedJwt, idToken, tenantId, collector);
             } else {
@@ -694,9 +717,18 @@ class TenantAuthenticationHandler {
                                                            List<String> cookies) {
         Jwt jwt = signedJwt.getJwt();
         Errors errors = collector.collect();
-        Errors validationErrors = jwt.validate(tenant.issuer(),
-                                               tenantConfig.audience(),
-                                               tenantConfig.checkAudience());
+        JwtValidator.Builder jwtValidatorBuilder = JwtValidator.builder()
+                .addDefaultTimeValidators()
+                .addCriticalValidator()
+                .addUserPrincipalValidator();
+        if (tenant.issuer() != null) {
+            jwtValidatorBuilder.addIssuerValidator(tenant.issuer());
+        }
+        if (tenantConfig.checkAudience()) {
+            jwtValidatorBuilder.addAudienceValidator(tenantConfig.audience());
+        }
+        JwtValidator jwtValidation = jwtValidatorBuilder.build();
+        Errors validationErrors = jwtValidation.validate(jwt);
 
         if (errors.isValid() && validationErrors.isValid()) {
 
@@ -718,11 +750,17 @@ class TenantAuthenticationHandler {
             }
 
             if (missingScopes.isEmpty()) {
-                return AuthenticationResponse.builder()
+                AuthenticationResponse.Builder response = AuthenticationResponse.builder()
                         .status(SecurityResponse.SecurityStatus.SUCCESS)
-                        .user(subject)
-                        .responseHeader(HeaderNames.SET_COOKIE.defaultCase(), cookies)
-                        .build();
+                        .user(subject);
+
+                if (cookies.isEmpty()) {
+                    return response.build();
+                } else {
+                    return response
+                            .responseHeader(HeaderNames.SET_COOKIE.defaultCase(), cookies)
+                            .build();
+                }
             } else {
                 return errorResponse(providerRequest,
                                      Status.FORBIDDEN_403,
@@ -810,7 +848,7 @@ class TenantAuthenticationHandler {
         int rightLimit = 122; // letter 'z'
         int targetStringLength = 10;
 
-        return RANDOM.ints(leftLimit, rightLimit + 1)
+        return RANDOM.get().ints(leftLimit, rightLimit + 1)
                 .filter(i -> (i <= 57 || i >= 65) && (i <= 90 || i >= 97))
                 .limit(targetStringLength)
                 .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)

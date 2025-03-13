@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
 
-    Copyright (c) 2023 Oracle and/or its affiliates.
+    Copyright (c) 2023, 2024 Oracle and/or its affiliates.
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -44,7 +44,6 @@ This will mount `~/.oci` as a volume in the running docker container.
         <boolean path="docker.native-image">false</boolean>
         <boolean path="docker.jlink-image">false</boolean>
         <boolean path="k8s">true</boolean>
-        <boolean path="v8o">false</boolean>
         <boolean path="jpms">false</boolean>
     </presets>
     <call method="pre-processed-models"/>
@@ -69,6 +68,12 @@ This will mount `~/.oci` as a volume in the running docker container.
                 <include>src/main/resources/**</include>
             </includes>
             <model>
+                <list key="dependencies">
+                    <map>
+                        <value key="groupId">org.slf4j</value>
+                        <value key="artifactId">slf4j-jdk14</value>
+                    </map>
+                </list>
                 <list key="microprofile-config-entries">
                     <value template="mustache"><![CDATA[
 # Application properties. This is the default greeting
@@ -82,8 +87,9 @@ oci.monitoring.namespace=<your monitoring namespace e.g. helidon_oci>
 oci.logging.id=<your oci custom log id>
 
 # OCI Authentication strategy
-oci.auth-strategy=config_file,instance_principals,resource_principal
-                    ]]></value>
+oci.auth-strategy=config-file,instance-principals,resource-principal
+]]>
+                    </value>
                 </list>
                 <list key="yaml-config-entries">
                     <value template="mustache"><![CDATA[
@@ -101,7 +107,8 @@ ocimetrics:
   scopes: [base, vendor, application]
   # Enable or disable metric transmission to OCI. Defaults to true if not specified.
   enabled: true
-                    ]]></value>
+]]>
+                    </value>
                 </list>
                 <list key="oci-logging-entries">
                     <value template="mustache"><![CDATA[
@@ -113,7 +120,8 @@ ocimetrics:
 #
 # Check https://docs.oracle.com/en-us/iaas/Content/Logging/Concepts/custom_logs.htm for more information on how to
 # set up Custom Logs that uses the Unified monitoring agent.
-                    ]]></value>
+]]>
+                    </value>
                 </list>
             </model>
         </templates>
@@ -132,7 +140,12 @@ ocimetrics:
             <value key="artifactId">${artifactId}-server</value>
             <value key="parent-groupId">${groupId}</value>
             <value key="parent-version">${version}</value>
-            <value key="mainClass">io.helidon.microprofile.cdi.Main</value>
+            <list key="pom-properties">
+                <map>
+                    <value key="key">mainClass</value>
+                    <value key="value">io.helidon.microprofile.cdi.Main</value>
+                </map>
+            </list>
             <list key="dependencies">
                 <map>
                     <value key="groupId">io.helidon.microprofile.bundles</value>
@@ -273,7 +286,8 @@ ocimetrics:
                         <include>**/*MockedTest</include>
                     </includes>
                 </configuration>
-            </plugin>]]></value>
+            </plugin>]]>
+                </value>
             </list>
             <list key="maven-profiles">
                 <value template="mustache"><![CDATA[
@@ -310,11 +324,11 @@ ocimetrics:
                 </plugins>
             </build>
         </profile>
-    </profiles>]]></value>
+    </profiles>]]>
+                </value>
             </list>
             <value key="readme-description" file="files/README-Description.md"/>
-            <value key="readme-run-commands" template="mustache">
-                <![CDATA[
+            <value key="readme-run-commands" template="mustache"><![CDATA[
 ### Build the application
 
 1. Build without running a test
@@ -336,7 +350,7 @@ principal when running it in an oci compute instance.
 
 ### Run the application
 
-1. Default with no profile will use `config_file,instance_principals,resource_principal` authentication strategy
+1. Default with no profile will use `config-file,instance-principals,resource-principal` authentication strategy
      ```bash
      java -jar server/target/{{artifactId}}.jar
      ```
@@ -348,7 +362,7 @@ principal when running it in an oci compute instance.
      ```bash
      java -Dconfig.profile=prod -jar server/target/{{artifactId}}.jar
      ```
-            ]]>
+]]>
             </value>
             <list key="readme-exercise-the-application">
                 <value template="mustache"><![CDATA[
@@ -371,7 +385,8 @@ principal when running it in an oci compute instance.
    $ curl -X GET  http://localhost:8080/health/ready
    {"outcome":"UP","status":"UP","checks":[{"name":"CustomReadinessCheck","state":"UP","status":"UP","data":{"time":1646361474774}}]}
    ```
-                ]]></value>
+]]>
+                </value>
             </list>
             <list key="k8s-readme-sections">
                 <value template="mustache"><![CDATA[
@@ -394,7 +409,8 @@ Mount this volume as part of your application containers specification
         - mountPath: /root/.oci
           name: oci-config
 ```
-                                ]]></value>
+]]>
+                </value>
             </list>
             <list key="poms">
                 <value>ADD pom.xml pom.xml</value>

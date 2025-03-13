@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, 2023 Oracle and/or its affiliates.
+ * Copyright (c) 2022, 2024 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -65,6 +65,13 @@ public class OpenTelemetryTracerProvider implements TracerProvider {
     }
 
     /**
+     * Creates a new provider; reserved for service loading.
+     */
+    @Deprecated
+    public OpenTelemetryTracerProvider() {
+    }
+
+    /**
      * Register global tracer.
      *
      * @param tracer global tracer
@@ -83,6 +90,31 @@ public class OpenTelemetryTracerProvider implements TracerProvider {
         return GLOBAL_TRACER.get();
     }
 
+    /**
+     * Returns a {@link io.helidon.tracing.Span} representing the currently-active OpenTelemetry span with any current baggage
+     * set on the returned span.
+     *
+     * @return optional of the current span
+     */
+    public static Optional<Span> activeSpan() {
+        io.opentelemetry.context.Context otelContext = io.opentelemetry.context.Context.current();
+
+        // OTel Span.current() returns a no-op span if there is no current one. Use fromContextOrNull instead to distinguish.
+        io.opentelemetry.api.trace.Span otelSpan =
+                io.opentelemetry.api.trace.Span.fromContextOrNull(otelContext);
+
+        if (otelSpan == null) {
+            return Optional.empty();
+        }
+
+        // OTel Baggage.current() returns empty baggage if there is no current one. That's OK for baggage.
+        io.opentelemetry.api.baggage.Baggage otelBaggage = io.opentelemetry.api.baggage.Baggage.current();
+
+        // Create the span directly with the retrieved baggage. Ideally, it will be our writable baggage because we had put it
+        // there in the context.
+        return Optional.of(HelidonOpenTelemetry.create(otelSpan, otelBaggage));
+    }
+
     @Override
     public TracerBuilder<?> createBuilder() {
         return OpenTelemetryTracer.builder();
@@ -97,6 +129,7 @@ public class OpenTelemetryTracerProvider implements TracerProvider {
     public void global(Tracer tracer) {
         if (tracer instanceof OpenTelemetryTracer ott) {
             globalTracer(ott);
+            return;
         }
         throw new IllegalArgumentException("Tracer must be an instance of Helidon OpenTelemetry tracer. "
                                                    + "Please use HelidonOpenTelemetry to create such instance");
@@ -104,7 +137,7 @@ public class OpenTelemetryTracerProvider implements TracerProvider {
 
     @Override
     public Optional<Span> currentSpan() {
-        return Optional.ofNullable(io.opentelemetry.api.trace.Span.current()).map(HelidonOpenTelemetry::create);
+        return activeSpan();
     }
 
     @Override

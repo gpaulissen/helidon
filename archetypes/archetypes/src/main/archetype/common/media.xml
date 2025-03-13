@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
 
-    Copyright (c) 2022, 2023 Oracle and/or its affiliates.
+    Copyright (c) 2022, 2024 Oracle and/or its affiliates.
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -34,16 +34,6 @@
                             <option value="jsonp" name="JSON-P" description="Jakarta JSON Processing" if="${flavor} == 'se'">
                                 <output>
                                     <model>
-                                        <list key="dependencies">
-                                            <map>
-                                                <value key="groupId">jakarta.json</value>
-                                                <value key="artifactId">jakarta.json-api</value>
-                                            </map>
-                                            <map>
-                                                <value key="groupId">io.helidon.http.media</value>
-                                                <value key="artifactId">helidon-http-media-jsonp</value>
-                                            </map>
-                                        </list>
                                         <list key="MainTest-other-imports">
                                             <value>jakarta.json.JsonObject</value>
                                         </list>
@@ -56,9 +46,6 @@
         assertThat(response.entity().getString("message"), is("Hello World!"));
     }
 ]]></value>
-                                        </list>
-                                        <list key="module-requires">
-                                            <value>jakarta.json</value>
                                         </list>
                                     </model>
                                 </output>
@@ -84,6 +71,9 @@
                                                 <value key="groupId">jakarta.xml.bind</value>
                                                 <value key="artifactId">jakarta.xml.bind-api</value>
                                             </map>
+                                        </list>
+                                        <list key="initialize-at-build-time" if="${flavor} == 'mp'">
+                                            <value>com.fasterxml.jackson.core</value>
                                         </list>
                                         <list key="module-requires">
                                             <value>com.fasterxml.jackson.annotation</value>
@@ -129,7 +119,6 @@
 ]]></value>
                                         </list>
                                         <list key="module-requires">
-                                            <value>jakarta.json</value>
                                             <value>jakarta.json.bind</value>
                                         </list>
                                     </model>
@@ -151,26 +140,19 @@
                                     <value key="artifactId">helidon-http-media-multipart</value>
                                 </map>
                                 <map order="500" if="${flavor} == 'se'">
-                                    <value key="groupId">io.helidon.http.media</value>
-                                    <value key="artifactId">helidon-http-media-jsonp</value>
-                                </map>
-                                <map order="500" if="${flavor} == 'se'">
                                     <value key="groupId">io.helidon.webserver</value>
                                     <value key="artifactId">helidon-webserver-static-content</value>
                                 </map>
-                                <map order="500" if="${flavor} == 'se'">
-                                    <value key="groupId">jakarta.json</value>
-                                    <value key="artifactId">jakarta.json-api</value>
-                                </map>
                             </list>
                             <list key="module-requires" if="${flavor} == 'se'">
-                                <value>jakarta.json</value>
                                 <value>io.helidon.http.media.multipart</value>
                                 <value>io.helidon.webserver.staticcontent</value>
                             </list>
                             <list key="module-requires" if="${flavor} == 'mp'">
-                                <value>jakarta.json</value>
                                 <value>jersey.media.multipart</value>
+                            </list>
+                            <list key="module-opens" if="${flavor} == 'se'">
+                                <value>WEB</value>
                             </list>
                             <list key="Main-helidon-imports" if="${flavor} == 'se'">
                                 <value>io.helidon.http.Status</value>
@@ -235,6 +217,19 @@ curl -X GET http://localhost:8080/greet/Jose
 {"message":"Hola Jose!"}
 ```
 ]]></value>
+                </list>
+                <list key="dependencies" if="${media} contains 'multipart' || ${media.json-lib} == 'jsonp'">
+                    <map order="500" if="${flavor} == 'se'">
+                        <value key="groupId">jakarta.json</value>
+                        <value key="artifactId">jakarta.json-api</value>
+                    </map>
+                    <map order="500" if="${flavor} == 'se'">
+                        <value key="groupId">io.helidon.http.media</value>
+                        <value key="artifactId">helidon-http-media-jsonp</value>
+                    </map>
+                </list>
+                <list key="module-requires" if="${media} contains 'multipart' || ['jsonp', 'jsonb'] contains ${media.json-lib}">
+                    <value>jakarta.json</value>
                 </list>
             </model>
         </output>

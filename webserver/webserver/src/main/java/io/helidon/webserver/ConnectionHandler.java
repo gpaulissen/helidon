@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, 2023 Oracle and/or its affiliates.
+ * Copyright (c) 2022, 2025 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,12 +25,15 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Semaphore;
+import java.util.function.Supplier;
 
 import javax.net.ssl.SSLSocket;
 
 import io.helidon.common.buffers.BufferData;
+import io.helidon.common.buffers.Bytes;
 import io.helidon.common.buffers.DataReader;
 import io.helidon.common.buffers.DataWriter;
+import io.helidon.common.concurrency.limits.Limit;
 import io.helidon.common.socket.HelidonSocket;
 import io.helidon.common.socket.PeerInfo;
 import io.helidon.common.socket.PlainSocket;
@@ -53,11 +56,12 @@ import static java.lang.System.Logger.Level.WARNING;
  */
 class ConnectionHandler implements InterruptableTask<Void>, ConnectionContext {
     private static final System.Logger LOGGER = System.getLogger(ConnectionHandler.class.getName());
+    private static final String HTTP_1_0 = "HTTP/1.0\r";
 
     private final ListenerContext listenerContext;
     // we must safely release the semaphore whenever this connection is finished, so other connections can be created!
     private final Semaphore connectionSemaphore;
-    private final Semaphore requestSemaphore;
+    private final Limit requestLimit;
     private final ConnectionProviders connectionProviders;
     private final List<ServerConnectionSelector> providerCandidates;
     private final Map<String, ServerConnection> activeConnections;
@@ -75,7 +79,7 @@ class ConnectionHandler implements InterruptableTask<Void>, ConnectionContext {
 
     ConnectionHandler(ListenerContext listenerContext,
                       Semaphore connectionSemaphore,
-                      Semaphore requestSemaphore,
+                      Limit requestLimit,
                       ConnectionProviders connectionProviders,
                       Map<String, ServerConnection> activeConnections,
                       Socket socket,
@@ -84,7 +88,7 @@ class ConnectionHandler implements InterruptableTask<Void>, ConnectionContext {
                       Tls tls) {
         this.listenerContext = listenerContext;
         this.connectionSemaphore = connectionSemaphore;
-        this.requestSemaphore = requestSemaphore;
+        this.requestLimit = requestLimit;
         this.connectionProviders = connectionProviders;
         this.providerCandidates = connectionProviders.providerCandidates();
         this.activeConnections = activeConnections;
@@ -130,9 +134,11 @@ class ConnectionHandler implements InterruptableTask<Void>, ConnectionContext {
                 helidonSocket = PlainSocket.server(socket, channelId, serverChannelId);
             }
 
-            reader = new DataReader(helidonSocket);
-            writer = SocketWriter.create(listenerContext.executor(), helidonSocket,
-                    listenerContext.config().writeQueueLength());
+            reader = new DataReader(new MapExceptionDataSupplier(helidonSocket));
+            writer = SocketWriter.create(listenerContext.executor(),
+                                         helidonSocket,
+                                         listenerConfig.writeQueueLength(),
+                                         listenerConfig.smartAsyncWrites());
         } catch (Exception e) {
             throw e instanceof RuntimeException re ? re : new RuntimeException(e);      // see ServerListener
         }
@@ -159,20 +165,24 @@ class ConnectionHandler implements InterruptableTask<Void>, ConnectionContext {
             }
 
             if (connection == null) {
+                if (isHttp10Connection(reader)) {
+                    // cannot easily return 505, so log better message instead
+                    throw new CloseConnectionException("HTTP 1.0 is not supported, consider using HTTP 1.1");
+                }
                 throw new CloseConnectionException("No suitable connection provider");
             }
             activeConnections.put(socketsId, connection);
-            connection.handle(requestSemaphore);
+            connection.handle(requestLimit);
         } catch (RequestException e) {
             helidonSocket.log(LOGGER, WARNING, "escaped Request exception", e);
         } catch (HttpException e) {
             helidonSocket.log(LOGGER, WARNING, "escaped HTTP exception", e);
+        } catch (ServerConnectionException e) {
+            // socket exception - the socket failed, probably killed by OS, proxy or client
+            helidonSocket.log(LOGGER, TRACE, "server I/O issue", e);
         } catch (CloseConnectionException e) {
             // end of request stream - safe to close the connection, as it was requested by our client
             helidonSocket.log(LOGGER, TRACE, "connection close requested", e);
-        } catch (UncheckedIOException e) {
-            // socket exception - the socket failed, probably killed by OS, proxy or client
-            helidonSocket.log(LOGGER, TRACE, "received I/O exception", e);
         } catch (Exception e) {
             helidonSocket.log(LOGGER, WARNING, "unexpected exception", e);
         } finally {
@@ -239,6 +249,11 @@ class ConnectionHandler implements InterruptableTask<Void>, ConnectionContext {
     @Override
     public Optional<ProxyProtocolData> proxyProtocolData() {
         return Optional.ofNullable(proxyProtocolData);
+    }
+
+    @Override
+    public HelidonSocket serverSocket() {
+        return helidonSocket;
     }
 
     private ServerConnection identifyConnection() {
@@ -321,6 +336,34 @@ class ConnectionHandler implements InterruptableTask<Void>, ConnectionContext {
             helidonSocket.close();
         } catch (Throwable e) {
             helidonSocket.log(LOGGER, TRACE, "Failed to close socket on connection close", e);
+        }
+    }
+
+    static boolean isHttp10Connection(DataReader reader) {
+        try {
+            reader.ensureAvailable();
+        } catch (DataReader.InsufficientDataAvailableException e) {
+            throw new CloseConnectionException("No data available", e);
+        }
+        BufferData request = reader.getBuffer(reader.available());
+        int lf = request.indexOf(Bytes.LF_BYTE);
+        return lf != -1 && request.readString(lf).endsWith(HTTP_1_0);
+    }
+
+    private static class MapExceptionDataSupplier implements Supplier<byte[]> {
+        private final HelidonSocket helidonSocket;
+
+        private MapExceptionDataSupplier(HelidonSocket helidonSocket) {
+            this.helidonSocket = helidonSocket;
+        }
+
+        @Override
+        public byte[] get() {
+            try {
+                return helidonSocket.get();
+            } catch (UncheckedIOException e) {
+                throw new ServerConnectionException("Failed to get data from socket", e);
+            }
         }
     }
 }

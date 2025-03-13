@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, 2024 Oracle and/or its affiliates.
+ * Copyright (c) 2023, 2025 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,9 @@ package io.helidon.metrics.api;
 import java.util.Optional;
 
 /**
- * Records a distribution of values (e.g., sizes of responses returned by a server).
+ * Records a distribution of samples (e.g., sizes of responses returned by a server), each with a {@code long} value, and
+ * reports statistics over all samples (count, total, mean, max) as well as grouping samples using percentiles or bucket
+ * boundaries.
  */
 public interface DistributionSummary extends Meter {
 
@@ -114,6 +116,14 @@ public interface DistributionSummary extends Meter {
         Builder distributionStatisticsConfig(DistributionStatisticsConfig.Builder distributionStatisticsConfigBuilder);
 
         /**
+         * Sets whether to publish a percentile histogram.
+         *
+         * @param value true/false
+         * @return updated builder
+         */
+        Builder publishPercentileHistogram(boolean value);
+
+        /**
          * Returns the scale set on the builder.
          *
          * @return the scale
@@ -126,5 +136,12 @@ public interface DistributionSummary extends Meter {
          * @return distribution statistics config, if set; empty otherwise
          */
         Optional<DistributionStatisticsConfig.Builder> distributionStatisticsConfig();
+
+        /**
+         * Returns whether to publsh percentile histogram.
+         *
+         * @return true/false
+         */
+        Optional<Boolean> publishPercentileHistogram();
     }
 }

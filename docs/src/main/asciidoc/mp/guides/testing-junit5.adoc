@@ -1,6 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////
 
-    Copyright (c) 2021, 2024 Oracle and/or its affiliates.
+    Copyright (c) 2021, 2025 Oracle and/or its affiliates.
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -95,16 +95,27 @@ The test is now complete and verifies the message.
 
 The testing extension supports a few additional annotations that allow for finer control of the test execution.
 
-
 .Optional Extension Annotations
-[width="70%",options="header"]
+[cols="1,3"]
 |====================
 | Annotation | Description
-| `@HelidonTest(resetPerTest = true)` | Resets the container for each method.
 
+| `@HelidonTest(resetPerTest = true)`
+| Resets the container for each method.
 This is useful when we want to modify configuration or beans between executions. In such a case, injection into fields is not possible, as we would need a different instance for each test.
-| `@AddConfig(key = "app.greeting", value = "Unite")` |  Defines a new configuration (either on class level, or method level) by adding a single configuration key/value.
-| `@Configuration(configSources = "test-config.properties")` | Adds a whole config source from classpath.
+
+| `@AddConfig(key = "app.greeting", value = "Unite")`
+|  Define additional configuration (either on class level, or method level) by adding a single configuration key/value.
+
+| `@AddConfigBlock(type = "properties", value = """ +
+    some.key1=some.value1 +
+    some.key2=some.value2 +
+""")`
+|  Define additional configuration (either on class level, or method level) by adding one or more configuration key/value pairs.
+
+| `@Configuration(configSources = "test-config.properties")`
+| Adds a whole config source from classpath.
+
 |====================
 
 Here's an example showing how these approaches are used to execute the same endpoint with different configuration:
@@ -173,7 +184,7 @@ This guide demonstrated how to create tests for MicroProfile applications in a J
 Refer to the following references for additional information:
 
 * https://junit.org/junit5/docs/current/user-guide/[JUnit 5 User Guide]
-* xref:../testing.adoc[Testing with JUnit 5]
+* xref:../testing/testing.adoc[Testing with JUnit 5]
 
 
 

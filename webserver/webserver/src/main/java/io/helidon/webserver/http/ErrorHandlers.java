@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, 2023 Oracle and/or its affiliates.
+ * Copyright (c) 2022, 2024 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,6 @@
 
 package io.helidon.webserver.http;
 
-import java.io.UncheckedIOException;
 import java.net.SocketException;
 import java.util.IdentityHashMap;
 import java.util.Map;
@@ -31,6 +30,7 @@ import io.helidon.http.InternalServerException;
 import io.helidon.http.RequestException;
 import io.helidon.webserver.CloseConnectionException;
 import io.helidon.webserver.ConnectionContext;
+import io.helidon.webserver.ServerConnectionException;
 
 /**
  * Http routing Error handlers.
@@ -67,6 +67,7 @@ public final class ErrorHandlers {
      * @param response HTTP server response
      * @param task     task to execute
      */
+    @SuppressWarnings({"unchecked", "rawtypes"})
     public void runWithErrorHandling(ConnectionContext ctx,
                                      RoutingRequest request,
                                      RoutingResponse response,
@@ -76,7 +77,7 @@ public final class ErrorHandlers {
             if (response.hasEntity()) {
                 response.commit();
             }
-        } catch (CloseConnectionException | UncheckedIOException e) {
+        } catch (CloseConnectionException e) {
             // these errors must "bubble up"
             throw e;
         } catch (RequestException e) {
@@ -116,9 +117,9 @@ public final class ErrorHandlers {
             }
         } catch (RuntimeException e) {
             handleError(ctx, request, response, e);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             if (e.getCause() instanceof SocketException se) {
-                throw new UncheckedIOException(se);
+                throw new ServerConnectionException("SocketException during routing", se);
             }
             handleError(ctx, request, response, e);
         }
@@ -176,6 +177,7 @@ public final class ErrorHandlers {
         response.commit();
     }
 
+    @SuppressWarnings("unchecked")
     private void handleError(ConnectionContext ctx, RoutingRequest request, RoutingResponse response, Throwable e) {
         errorHandler(e.getClass())
                 .ifPresentOrElse(it -> handleError(ctx, request, response, e, (ErrorHandler<Throwable>) it),
@@ -191,6 +193,7 @@ public final class ErrorHandlers {
                     .status(httpException.status())
                     .setKeepAlive(httpException.keepAlive())
                     .request(DirectTransportRequest.create(request.prologue(), request.headers()))
+                    .update(it -> httpException.headers().forEach(it::header))
                     .build());
         } else {
             // to be handled by error handler
@@ -211,7 +214,7 @@ public final class ErrorHandlers {
         if (!response.reset()) {
             ctx.log(LOGGER, System.Logger.Level.WARNING, "Unable to reset response for error handler.");
             throw new CloseConnectionException(
-                    "Cannot send response of a simple handler, status and headers already written");
+                    "Cannot send response of a simple handler, status and headers already written", e);
         }
         try {
             it.handle(request, response, e);

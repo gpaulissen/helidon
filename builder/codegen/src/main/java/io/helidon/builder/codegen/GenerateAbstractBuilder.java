@@ -44,6 +44,8 @@ import io.helidon.common.types.Annotations;
 import io.helidon.common.types.TypeName;
 import io.helidon.common.types.TypeNames;
 
+import static io.helidon.builder.codegen.Types.CONFIG_BUILDER_SUPPORT;
+import static io.helidon.builder.codegen.Types.REGISTRY_BUILDER_SUPPORT;
 import static io.helidon.codegen.CodegenUtil.capitalize;
 import static io.helidon.common.types.TypeNames.LIST;
 import static io.helidon.common.types.TypeNames.MAP;
@@ -59,6 +61,7 @@ final class GenerateAbstractBuilder {
                          TypeName prototype,
                          TypeName runtimeType,
                          List<TypeArgument> typeArguments,
+                         List<TypeName> typeArgumentNames,
                          TypeContext typeContext) {
         Optional<TypeName> superType = typeContext.typeInfo()
                 .superPrototype();
@@ -73,7 +76,7 @@ final class GenerateAbstractBuilder {
                             .description("type of the builder extending this abstract builder")
                             .bound(TypeName.builder()
                                            .from(TypeName.create(prototype.fqName() + ".BuilderBase"))
-                                           .addTypeArguments(typeArguments)
+                                           .addTypeArguments(typeArgumentNames)
                                            .addTypeArgument(TypeName.createFromGenericDeclaration("BUILDER"))
                                            .addTypeArgument(TypeName.createFromGenericDeclaration("PROTOTYPE"))
                                            .build()))
@@ -91,7 +94,7 @@ final class GenerateAbstractBuilder {
 
             if (typeContext.configuredData().configured() || hasConfig(typeContext.propertyData().properties())) {
                 builder.addInterface(TypeName.builder()
-                                             .from(Types.PROTOTYPE_CONFIGURED_BUILDER)
+                                             .from(Types.CONFIG_CONFIGURED_BUILDER)
                                              .addTypeArgument(TypeName.createFromGenericDeclaration("BUILDER"))
                                              .addTypeArgument(TypeName.createFromGenericDeclaration("PROTOTYPE"))
                                              .build());
@@ -107,7 +110,7 @@ final class GenerateAbstractBuilder {
 
             // method "from(prototype)"
             fromInstanceMethod(builder, typeContext, prototype);
-            fromBuilderMethod(builder, typeContext, typeArguments);
+            fromBuilderMethod(builder, typeContext, typeArgumentNames);
 
             // method preBuildPrototype() - handles providers, decorator
             preBuildPrototypeMethod(builder, typeContext);
@@ -126,7 +129,7 @@ final class GenerateAbstractBuilder {
                      true);
 
             // before the builder class is finished, we also generate a protected implementation
-            generatePrototypeImpl(builder, typeContext, typeArguments);
+            generatePrototypeImpl(builder, typeContext, typeArguments, typeArgumentNames);
         });
     }
 
@@ -182,10 +185,27 @@ final class GenerateAbstractBuilder {
             for (String annotation : customMethod.generatedMethod().annotations()) {
                 method.addAnnotation(Annotation.parse(annotation));
             }
-            for (CustomMethods.Argument argument : generated.arguments()) {
-                method.addParameter(param -> param.name(argument.name())
-                        .type(argument.typeName()));
+            int argSize = generated.arguments().size();
+            for (int i = 0; i < argSize; i++) {
+                CustomMethods.Argument argument = generated.arguments().get(i);
+
+                if (i == argSize - 1 && argument.typeName().array() && !argument.typeName().primitive()) {
+                    // last argument
+                    method.addParameter(param -> param.name(argument.name())
+                            .type(TypeName.builder(argument.typeName())
+                                          .array(false)
+                                          .build())
+                            .vararg(true));
+                } else {
+                    method.addParameter(param -> param.name(argument.name())
+                            .type(argument.typeName()));
+                }
             }
+
+            for (TypeName typeParameter : customMethod.generatedMethod().method().typeParameters()) {
+                method.addGenericArgument(TypeArgument.create(typeParameter));
+            }
+
             if (!generated.javadoc().isEmpty()) {
                 Javadoc javadoc = Javadoc.builder()
                         .from(Javadoc.parse(generated.javadoc()))
@@ -193,6 +213,7 @@ final class GenerateAbstractBuilder {
                         .build();
                 method.javadoc(javadoc);
             }
+
             builder.addMethod(method);
         }
     }
@@ -220,6 +241,12 @@ final class GenerateAbstractBuilder {
         }
 
         TypeName returnType = TypeName.createFromGenericDeclaration("BUILDER");
+
+        if (typeContext.typeInfo().supportsServiceRegistry()) {
+            // generate setter for service registry
+            serviceRegistrySetter(classBuilder);
+        }
+
         // first setters
         for (PrototypeProperty child : properties) {
             if (isConfigProperty(child)) {
@@ -288,6 +315,37 @@ final class GenerateAbstractBuilder {
         }
     }
 
+    private static void serviceRegistrySetter(InnerClass.Builder classBuilder) {
+        /*
+        public BUILDER config(Config config) {
+            this.config = config;
+            config.get("server").as(String.class).ifPresent(this::server);
+            return self();
+        }
+         */
+        Javadoc javadoc = Javadoc.builder()
+                .addLine("Provide an explicit registry instance to use.")
+                .addLine("<p>")
+                .addLine("If not configured, the {@link "
+                                 + Types.GLOBAL_SERVICE_REGISTRY.fqName()
+                                 + "} would be used to discover services.")
+                .build();
+
+        Method.Builder builder = Method.builder()
+                .name("serviceRegistry")
+                .javadoc(javadoc)
+                .returnType(TypeArgument.create("BUILDER"), "updated builder instance")
+                .addParameter(param -> param.name("registry")
+                        .type(Types.SERVICE_REGISTRY)
+                        .description("service registry instance"))
+                .addContent(Objects.class)
+                .addContentLine(".requireNonNull(registry);")
+                .addContentLine("this.serviceRegistry = registry;")
+                .addContentLine("return self();");
+
+        classBuilder.addMethod(builder);
+    }
+
     private static void createConfigMethod(InnerClass.Builder classBuilder, TypeContext typeContext,
                                            AnnotationDataConfigured configured,
                                            List<PrototypeProperty> properties) {
@@ -328,6 +386,7 @@ final class GenerateAbstractBuilder {
         if (configured.configured()) {
             for (PrototypeProperty child : properties) {
                 if (child.configuredOption().configured() && !child.configuredOption().provider()) {
+                    // registry service can never reach here, as they do not support Option.Configured
                     child.typeHandler().generateFromConfig(builder,
                                                            child.configuredOption(),
                                                            child.factoryMethods());
@@ -342,7 +401,8 @@ final class GenerateAbstractBuilder {
         Method.Builder methodBuilder = Method.builder()
                 .name("from")
                 .returnType(TypeArgument.create("BUILDER"))
-                .description("Update this builder from an existing prototype instance.")
+                .description("Update this builder from an existing prototype instance. "
+                                     + "This method disables automatic service discovery.")
                 .addParameter(param -> param.name("prototype")
                         .type(prototype)
                         .description("existing prototype to update this builder from"))
@@ -354,6 +414,13 @@ final class GenerateAbstractBuilder {
         for (PrototypeProperty property : typeContext.propertyData().properties()) {
             TypeName declaredType = property.typeHandler().declaredType();
             if (declaredType.isSet() || declaredType.isList() || declaredType.isMap()) {
+                if (declaredType.isList()) {
+                    // A list might contain only default values. If it has not been updated, clear it of default values
+                    // before adding the values from the other builder.
+                    methodBuilder.addContentLine("if (!is" + capitalize(property.name()) + "Mutated) {")
+                            .addContentLine(property.name() + ".clear();")
+                            .addContentLine("}");
+                }
                 methodBuilder.addContent("add");
                 methodBuilder.addContent(capitalize(property.name()));
                 methodBuilder.addContent("(prototype.");
@@ -376,6 +443,9 @@ final class GenerateAbstractBuilder {
                     methodBuilder.addContentLine("());");
                 }
             }
+            if (property.configuredOption().provider() || property.registryService()) {
+                methodBuilder.addContentLine(property.typeHandler().name() + "DiscoverServices = false;");
+            }
         }
         methodBuilder.addContentLine("return self();");
         builder.addMethod(methodBuilder);
@@ -383,7 +453,8 @@ final class GenerateAbstractBuilder {
 
     private static void fromBuilderMethod(InnerClass.Builder classBuilder,
                                           TypeContext typeContext,
-                                          List<TypeArgument> arguments) {
+                                          List<TypeName> arguments) {
+
         TypeName prototype = typeContext.typeInfo().prototype();
         TypeName parameterType = TypeName.builder()
                 .from(TypeName.create(prototype.fqName() + ".BuilderBase"))
@@ -412,13 +483,48 @@ final class GenerateAbstractBuilder {
                 methodBuilder.addContentLine("builder." + getterName + "().ifPresent(this::" + setterName + ");");
             } else {
                 if (declaredType.isSet() || declaredType.isList() || declaredType.isMap()) {
-                    methodBuilder.addContent("add" + capitalize(property.name()));
-                } else {
-                    methodBuilder.addContent(setterName);
-                }
-                methodBuilder.addContentLine("(builder." + getterName + "());");
-            }
+                    if (declaredType.isList()) {
+                        /*
+                        If this builder's list HAS been mutated, add the other builder's values ONLY if they are not defaults.
 
+                        If this builder's list HAS NOT been mutated, clear it (to remove defaults) and add the other builder's
+                        values regardless of whether they are defaulted or explicitly set.
+
+                        Generated code:
+
+                        if (isXxxMutated) {
+                            if (builder.isXxxMutated) {
+                                addXxx(builder.xxx());
+                            }
+                        } else {
+                            xxx.clear();
+                            addXxx(builder.xxx());
+                        }
+                        */
+                        String isMutatedProperty = TypeHandlerList.isMutatedField(property.name());
+                        methodBuilder.addContentLine("if (" + isMutatedProperty + ") {")
+                                .addContentLine("if (builder." + isMutatedProperty + ") {")
+                                .addContentLine("add" + capitalize(property.name()) + "(builder." + property.name() + ");")
+                                .addContentLine("}")
+                                .decreaseContentPadding() // Ideally would not be needed but makes for nicer generated code.
+                                .addContentLine("} else {")
+                                .addContentLine(property.name() + ".clear();")
+                                .addContentLine("add" + capitalize(property.name()) + "(builder." + property.name() + ");")
+                                .addContentLine("}");
+
+                    } else {
+                        // Non-list collection case.
+                        methodBuilder.addContentLine("add" + capitalize(property.name()) + "(builder." + property.name() + ");");
+                    }
+                } else {
+                    // Non-collection case.
+                    methodBuilder.addContentLine(setterName + "(builder." + getterName + "());");
+                }
+            }
+            if (property.configuredOption().provider() || property.registryService()) {
+                methodBuilder.addContent(property.name() + "DiscoverServices");
+                methodBuilder.addContentLine(" = builder." + property.name() + "DiscoverServices;");
+            }
         }
         methodBuilder.addContentLine("return self();");
         classBuilder.addMethod(methodBuilder);
@@ -427,6 +533,9 @@ final class GenerateAbstractBuilder {
     private static void fields(InnerClass.Builder classBuilder, TypeContext typeContext, boolean isBuilder) {
         if (isBuilder && (typeContext.configuredData().configured() || hasConfig(typeContext.propertyData().properties()))) {
             classBuilder.addField(builder -> builder.type(Types.COMMON_CONFIG).name("config"));
+        }
+        if (isBuilder && typeContext.typeInfo().supportsServiceRegistry()) {
+            classBuilder.addField(builder -> builder.type(Types.SERVICE_REGISTRY).name("serviceRegistry"));
         }
         for (PrototypeProperty child : typeContext.propertyData().properties()) {
             if (isBuilder && child.configuredOption().hasAllowedValues()) {
@@ -448,10 +557,20 @@ final class GenerateAbstractBuilder {
             if (!isBuilder || !isConfigProperty(child)) {
                 classBuilder.addField(child.fieldDeclaration(isBuilder));
             }
-            if (isBuilder && child.configuredOption().provider()) {
+            if (isBuilder && (child.configuredOption().provider())) {
                 classBuilder.addField(builder -> builder.type(boolean.class)
                         .name(child.name() + "DiscoverServices")
                         .defaultValue(String.valueOf(child.configuredOption().providerDiscoverServices())));
+            }
+            if (isBuilder && (child.registryService())) {
+                classBuilder.addField(builder -> builder.type(boolean.class)
+                        .name(child.name() + "DiscoverServices")
+                        .defaultValue("true"));
+            }
+            if (isBuilder && child.typeHandler().declaredType().isList()) {
+                classBuilder.addField(builder -> builder.type(boolean.class)
+                        .name("is" + capitalize(child.name()) + "Mutated")
+                        .accessModifier(AccessModifier.PRIVATE));
             }
         }
     }
@@ -474,64 +593,51 @@ final class GenerateAbstractBuilder {
         typeContext.typeInfo()
                 .superPrototype()
                 .ifPresent(it -> preBuildBuilder.addContentLine("super.preBuildPrototype();"));
-        if (typeContext.propertyData().hasProvider()) {
+        if (typeContext.typeInfo().supportsServiceRegistry() || typeContext.propertyData().hasProvider()) {
             boolean configured = typeContext.configuredData().configured();
-            if (configured) {
+
+            if (configured && typeContext.propertyData().hasProvider()) {
                 // need to have a non-null config instance
-                preBuildBuilder.addContentLine("var config = this.config == null ? Config.empty() : this.config;");
+                preBuildBuilder.addContent("var config = this.config == null ? ")
+                        .addContent(Types.COMMON_CONFIG)
+                        .addContentLine(".empty() : this.config;");
             }
+
+            if (typeContext.typeInfo().supportsServiceRegistry()) {
+                preBuildBuilder.addContent("var registry = ")
+                        .addContent(Optional.class)
+                        .addContentLine(".ofNullable(this.serviceRegistry);");
+            }
+
             for (PrototypeProperty property : typeContext.propertyData().properties()) {
+                boolean propertyConfigured = property.configuredOption().configured();
+
                 AnnotationDataOption configuredOption = property.configuredOption();
                 if (configuredOption.provider()) {
                     boolean defaultDiscoverServices = configuredOption.providerDiscoverServices();
 
                     // using a code block, so we can reuse the same variable names for multiple providers
-                    preBuildBuilder.addContentLine("{");
                     TypeName providerType = configuredOption.providerType();
-                    preBuildBuilder.addContent("var serviceLoader = ")
-                            .addContent(HelidonServiceLoader.class)
-                            .addContent(".create(")
-                            .addContent(ServiceLoader.class)
-                            .addContent(".load(")
-                            .addContent(providerType.genericTypeName())
-                            .addContentLine(".class));");
-                    if (configured) {
-                        TypeName typeName = property.typeHandler().declaredType();
-                        if (typeName.isList() || typeName.isSet()) {
-                            preBuildBuilder.addContent("this.add")
-                                    .addContent(capitalize(property.name()))
-                                    .addContent("(discoverServices(config, \"")
-                                    .addContent(configuredOption.configKey())
-                                    .addContent("\", serviceLoader, ")
-                                    .addContent(providerType.genericTypeName())
-                                    .addContent(".class, ")
-                                    .addContent(property.typeHandler().actualType().genericTypeName())
-                                    .addContent(".class, ")
-                                    .addContent(property.name())
-                                    .addContent("DiscoverServices, ")
-                                    .addContent(property.name())
-                                    .addContentLine("));");
-                        } else {
-                            preBuildBuilder.addContent("discoverService(config, \"")
-                                    .addContent(configuredOption.configKey())
-                                    .addContent("\", serviceLoader, ")
-                                    .addContent(providerType)
-                                    .addContent(".class, ")
-                                    .addContent(property.typeHandler().actualType().genericTypeName())
-                                    .addContent(".class, ")
-                                    .addContent(property.name())
-                                    .addContent("DiscoverServices, @java.util.Optional@.ofNullable(")
-                                    .addContent(property.name())
-                                    .addContent(")).ifPresent(this::")
-                                    .addContent(property.setterName())
-                                    .addContentLine(");");
-                        }
+
+                    if (typeContext.typeInfo().supportsServiceRegistry()) {
+                        serviceRegistryPropertyDiscovery(preBuildBuilder,
+                                                         property,
+                                                         propertyConfigured,
+                                                         configuredOption,
+                                                         providerType,
+                                                         defaultDiscoverServices);
                     } else {
-                        if (defaultDiscoverServices) {
-                            preBuildBuilder.addContentLine("this." + property.name() + "(serviceLoader.asList());");
-                        }
+                        serviceLoaderPropertyDiscovery(preBuildBuilder,
+                                                       property,
+                                                       propertyConfigured,
+                                                       configuredOption,
+                                                       providerType,
+                                                       defaultDiscoverServices);
                     }
-                    preBuildBuilder.addContentLine("}");
+
+                } else if (property.registryService()) {
+                    serviceRegistryProperty(preBuildBuilder,
+                                            property);
                 }
             }
         }
@@ -541,6 +647,176 @@ final class GenerateAbstractBuilder {
                     .addContentLine("().decorate(this);");
         }
         classBuilder.addMethod(preBuildBuilder);
+    }
+
+    private static void serviceLoaderPropertyDiscovery(Method.Builder preBuildBuilder,
+                                                       PrototypeProperty property,
+                                                       boolean propertyConfigured,
+                                                       AnnotationDataOption configuredOption,
+                                                       TypeName providerType,
+                                                       boolean defaultDiscoverServices) {
+        preBuildBuilder.addContentLine("{");
+        preBuildBuilder.addContent("var serviceLoader = ")
+                .addContent(HelidonServiceLoader.class)
+                .addContent(".create(")
+                .addContent(ServiceLoader.class)
+                .addContent(".load(")
+                .addContent(providerType.genericTypeName())
+                .addContentLine(".class));");
+        if (propertyConfigured) {
+            TypeName typeName = property.typeHandler().declaredType();
+            if (typeName.isList() || typeName.isSet()) {
+                preBuildBuilder.addContent("this.add")
+                        .addContent(capitalize(property.name()))
+                        .addContent("(")
+                        .addContent(CONFIG_BUILDER_SUPPORT)
+                        .addContent(".discoverServices(config, \"")
+                        .addContent(configuredOption.configKey())
+                        .addContent("\", serviceLoader, ")
+                        .addContent(providerType.genericTypeName())
+                        .addContent(".class, ")
+                        .addContent(property.typeHandler().actualType().genericTypeName())
+                        .addContent(".class, ")
+                        .addContent(property.name())
+                        .addContent("DiscoverServices, ")
+                        .addContent(property.name())
+                        .addContentLine("));");
+            } else {
+                preBuildBuilder
+                        .addContent(CONFIG_BUILDER_SUPPORT)
+                        .addContent(".discoverService(config, \"")
+                        .addContent(configuredOption.configKey())
+                        .addContent("\", serviceLoader, ")
+                        .addContent(providerType)
+                        .addContent(".class, ")
+                        .addContent(property.typeHandler().actualType().genericTypeName())
+                        .addContent(".class, ")
+                        .addContent(property.name())
+                        .addContent("DiscoverServices, ")
+                        .addContent(Optional.class)
+                        .addContent(".ofNullable(")
+                        .addContent(property.name())
+                        .addContent(")).ifPresent(this::")
+                        .addContent(property.setterName())
+                        .addContentLine(");");
+            }
+        } else {
+            if (defaultDiscoverServices) {
+                preBuildBuilder.addContentLine("this." + property.name() + "(serviceLoader.asList());");
+            }
+        }
+        preBuildBuilder.addContentLine("}");
+    }
+
+    private static void serviceRegistryProperty(Method.Builder preBuildBuilder,
+                                                PrototypeProperty property) {
+        TypeName typeName = property.typeHandler().declaredType();
+        if (typeName.isList()) {
+            preBuildBuilder
+                    .addContent("this.add")
+                    .addContent(capitalize(property.name()))
+                    .addContent("(")
+                    .addContent(REGISTRY_BUILDER_SUPPORT)
+                    .addContent(".serviceList(registry, ")
+                    .addContentCreate(property.typeHandler().actualType())
+                    .addContent(", ")
+                    .addContent(property.name())
+                    .addContentLine("DiscoverServices));");
+        } else if (typeName.isSet()) {
+            preBuildBuilder
+                    .addContent("this.add")
+                    .addContent(capitalize(property.name()))
+                    .addContent("(")
+                    .addContent(REGISTRY_BUILDER_SUPPORT)
+                    .addContent(".serviceSet(registry, ")
+                    .addContentCreate(property.typeHandler().actualType())
+                    .addContent(", ")
+                    .addContent(property.name())
+                    .addContentLine("DiscoverServices));");
+        } else {
+            preBuildBuilder
+                    .addContent(REGISTRY_BUILDER_SUPPORT)
+                    .addContent(".service(registry, ")
+                    .addContentCreate(property.typeHandler().actualType())
+                    .addContent(", ")
+                    .addContent(Optional.class)
+                    .addContent(".ofNullable(")
+                    .addContent(property.name())
+                    .addContent("), ")
+                    .addContent(property.name())
+                    .addContent("DiscoverServices).ifPresent(this::")
+                    .addContent(property.setterName())
+                    .addContentLine(");");
+        }
+    }
+
+    private static void serviceRegistryPropertyDiscovery(Method.Builder preBuildBuilder,
+                                                         PrototypeProperty property,
+                                                         boolean propertyConfigured,
+                                                         AnnotationDataOption configuredOption,
+                                                         TypeName providerType,
+                                                         boolean defaultDiscoverServices) {
+        if (propertyConfigured) {
+            TypeName typeName = property.typeHandler().declaredType();
+            if (typeName.isList() || typeName.isSet()) {
+                preBuildBuilder.addContent("this.add")
+                        .addContent(capitalize(property.name()))
+                        .addContent("(")
+                        .addContent(CONFIG_BUILDER_SUPPORT)
+                        .addContentLine(".discoverServices(config,")
+                        .increaseContentPadding()
+                        .increaseContentPadding()
+                        .increaseContentPadding()
+                        .addContent("\"")
+                        .addContent(configuredOption.configKey())
+                        .addContentLine("\",")
+                        .addContentLine("registry,")
+                        .addContent(providerType.genericTypeName())
+                        .addContentLine(".class,")
+                        .addContent(property.typeHandler().actualType().genericTypeName())
+                        .addContentLine(".class,")
+                        .addContent(property.name())
+                        .addContentLine("DiscoverServices,")
+                        .addContent(property.name())
+                        .addContentLine("));")
+                        .decreaseContentPadding()
+                        .decreaseContentPadding()
+                        .decreaseContentPadding();
+            } else {
+                preBuildBuilder
+                        .addContent(CONFIG_BUILDER_SUPPORT)
+                        .addContentLine(".discoverService(config,")
+                        .increaseContentPadding()
+                        .increaseContentPadding()
+                        .increaseContentPadding()
+                        .addContent("\"")
+                        .addContent(configuredOption.configKey())
+                        .addContentLine("\",")
+                        .addContentLine("registry,")
+                        .addContent(providerType)
+                        .addContentLine(".class,")
+                        .addContent(property.typeHandler().actualType().genericTypeName())
+                        .addContentLine(".class,")
+                        .addContent(property.name())
+                        .addContentLine("DiscoverServices,")
+                        .addContent(Optional.class)
+                        .addContent(".ofNullable(")
+                        .addContent(property.name())
+                        .addContentLine("))")
+                        .decreaseContentPadding()
+                        .decreaseContentPadding()
+                        .addContent(".ifPresent(this::")
+                        .addContent(property.setterName())
+                        .addContentLine(");")
+                        .decreaseContentPadding();
+            }
+        } else {
+            if (defaultDiscoverServices) {
+                preBuildBuilder.addContent("this." + property.name() + "(registry.all(")
+                        .addContent(providerType.genericTypeName())
+                        .addContentLine(".class));");
+            }
+        }
     }
 
     private static void validatePrototypeMethod(InnerClass.Builder classBuilder, TypeContext typeContext) {
@@ -622,7 +898,8 @@ final class GenerateAbstractBuilder {
 
     private static void generatePrototypeImpl(InnerClass.Builder classBuilder,
                                               TypeContext typeContext,
-                                              List<TypeArgument> typeArguments) {
+                                              List<TypeArgument> typeArguments,
+                                              List<TypeName> typeArgumentNames) {
         Optional<TypeName> superPrototype = typeContext.typeInfo()
                 .superPrototype();
         TypeName prototype = typeContext.typeInfo().prototype();
@@ -663,7 +940,7 @@ final class GenerateAbstractBuilder {
                         .addParameter(param -> param.name("builder")
                                 .type(TypeName.builder()
                                               .from(TypeName.create(ifaceName + ".BuilderBase"))
-                                              .addTypeArguments(typeArguments)
+                                              .addTypeArguments(typeArgumentNames)
                                               .addTypeArgument(TypeArgument.create("?"))
                                               .addTypeArgument(TypeArgument.create("?"))
                                               .build())
@@ -835,8 +1112,9 @@ final class GenerateAbstractBuilder {
             }
 
             method.addContent(equalityFields.stream()
-                                      .filter(it -> !(it.typeName().isOptional()
-                                                              && it.typeHandler().actualType().equals(Types.CHAR_ARRAY)))
+                                      .filter(it -> !(
+                                              it.typeName().isOptional()
+                                                      && it.typeHandler().actualType().equals(Types.CHAR_ARRAY)))
                                       .map(PrototypeProperty::name)
                                       .collect(Collectors.joining(", ")))
                     .addContent(")");

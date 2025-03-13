@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023 Oracle and/or its affiliates.
+ * Copyright (c) 2023, 2025 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,6 +59,10 @@ public abstract class ClientRequestBase<T extends ClientRequest<T>, R extends Ht
      */
     public static final Header USER_AGENT_HEADER = HeaderValues.create(HeaderNames.USER_AGENT,
                                                                        "Helidon " + Version.VERSION);
+    /**
+     * Proxy connection header.
+     */
+    public static final Header PROXY_CONNECTION = HeaderValues.create("Proxy-Connection", "keep-alive");
     private static final Map<String, AtomicLong> COUNTERS = new ConcurrentHashMap<>();
     private static final Set<String> SUPPORTED_SCHEMES = Set.of("https", "http");
 
@@ -83,6 +87,7 @@ public abstract class ClientRequestBase<T extends ClientRequest<T>, R extends Ht
     private Proxy proxy;
     private boolean keepAlive;
     private ClientConnection connection;
+    private Boolean sendExpectContinue;
 
     protected ClientRequestBase(HttpClientConfig clientConfig,
                                 WebClientCookieManager cookieManager,
@@ -90,11 +95,22 @@ public abstract class ClientRequestBase<T extends ClientRequest<T>, R extends Ht
                                 Method method,
                                 ClientUri clientUri,
                                 Map<String, String> properties) {
+        this(clientConfig, cookieManager, protocolId, method, clientUri, null, properties);
+    }
+
+    protected ClientRequestBase(HttpClientConfig clientConfig,
+                                WebClientCookieManager cookieManager,
+                                String protocolId,
+                                Method method,
+                                ClientUri clientUri,
+                                Boolean sendExpectContinue,
+                                Map<String, String> properties) {
         this.clientConfig = clientConfig;
         this.cookieManager = cookieManager;
         this.protocolId = protocolId;
         this.method = method;
         this.clientUri = clientUri;
+        this.sendExpectContinue = sendExpectContinue;
         this.properties = new HashMap<>(properties);
 
         this.headers = clientConfig.defaultRequestHeaders();
@@ -167,7 +183,7 @@ public abstract class ClientRequestBase<T extends ClientRequest<T>, R extends Ht
     @Override
     public T headers(Headers headers) {
         for (Header header : headers) {
-            this.headers.add(header);
+            this.headers.set(header);
         }
         return identity();
     }
@@ -253,24 +269,37 @@ public abstract class ClientRequestBase<T extends ClientRequest<T>, R extends Ht
 
     @Override
     public R request() {
-        headers.setIfAbsent(USER_AGENT_HEADER);
+        additionalHeaders();
         return validateAndSubmit(BufferData.EMPTY_BYTES);
     }
 
     @Override
-    public final R submit(Object entity) {
+    public R submit(Object entity) {
         if (!(entity instanceof byte[] bytes && bytes.length == 0)) {
             rejectHeadWithEntity();
         }
-        headers.setIfAbsent(USER_AGENT_HEADER);
+        additionalHeaders();
         return validateAndSubmit(entity);
     }
 
     @Override
-    public final R outputStream(OutputStreamHandler outputStreamConsumer) {
+    public R outputStream(OutputStreamHandler outputStreamConsumer) {
         rejectHeadWithEntity();
-        headers.setIfAbsent(USER_AGENT_HEADER);
+        additionalHeaders();
         return doOutputStream(outputStreamConsumer);
+    }
+
+    @Override
+    public T sendExpectContinue(boolean sendExpectContinue) {
+        this.sendExpectContinue = sendExpectContinue;
+        return identity();
+    }
+
+    /**
+     * Append additional headers before sending the request.
+     */
+    protected void additionalHeaders() {
+        headers.setIfAbsent(USER_AGENT_HEADER);
     }
 
     /**
@@ -351,6 +380,11 @@ public abstract class ClientRequestBase<T extends ClientRequest<T>, R extends Ht
     @Override
     public boolean skipUriEncoding() {
         return skipUriEncoding;
+    }
+
+    @Override
+    public Optional<Boolean> sendExpectContinue() {
+        return Optional.ofNullable(sendExpectContinue);
     }
 
     protected abstract R doSubmit(Object entity);
@@ -470,7 +504,7 @@ public abstract class ClientRequestBase<T extends ClientRequest<T>, R extends Ht
     }
 
     private void rejectHeadWithEntity() {
-        if (this.method.equals(Method.HEAD)) {
+        if (Method.HEAD.equals(this.method)) {
             throw new IllegalArgumentException("Payload in method '" + Method.HEAD + "' has no defined semantics");
         }
     }

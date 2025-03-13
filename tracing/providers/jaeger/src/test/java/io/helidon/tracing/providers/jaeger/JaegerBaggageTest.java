@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023 Oracle and/or its affiliates.
+ * Copyright (c) 2023, 2024 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ class JaegerBaggageTest {
     void testBaggage(){
         Span span = tracer.spanBuilder("test-span").start();
         Span spanWithBaggage = span.baggage("key", "value");
-        Optional<String> result = spanWithBaggage.baggage("key");
+        Optional<String> result = spanWithBaggage.baggage().get("key");
         assertThat(result.isPresent(), is(true));
         assertThat(result.get(), equalTo("value"));
 

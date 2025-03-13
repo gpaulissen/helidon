@@ -169,15 +169,24 @@ public final class OidcFeature implements HttpFeature {
     private OidcFeature(Builder builder) {
         this.oidcConfig = builder.oidcConfig;
         this.enabled = builder.enabled;
-        this.tokenCookieHandler = oidcConfig.tokenCookieHandler();
-        this.idTokenCookieHandler = oidcConfig.idTokenCookieHandler();
-        this.refreshTokenCookieHandler = oidcConfig.refreshTokenCookieHandler();
-        this.tenantCookieHandler = oidcConfig.tenantCookieHandler();
-        this.stateCookieHandler = oidcConfig.stateCookieHandler();
-        this.corsSupport = prepareCrossOriginSupport(oidcConfig.redirectUri(), oidcConfig.crossOriginConfig());
-        this.oidcConfigFinders = List.copyOf(builder.tenantConfigFinders);
-
-        this.oidcConfigFinders.forEach(tenantConfigFinder -> tenantConfigFinder.onChange(tenants::remove));
+        if (enabled) {
+            this.tokenCookieHandler = oidcConfig.tokenCookieHandler();
+            this.idTokenCookieHandler = oidcConfig.idTokenCookieHandler();
+            this.refreshTokenCookieHandler = oidcConfig.refreshTokenCookieHandler();
+            this.tenantCookieHandler = oidcConfig.tenantCookieHandler();
+            this.stateCookieHandler = oidcConfig.stateCookieHandler();
+            this.corsSupport = prepareCrossOriginSupport(oidcConfig.redirectUri(), oidcConfig.crossOriginConfig());
+            this.oidcConfigFinders = List.copyOf(builder.tenantConfigFinders);
+            this.oidcConfigFinders.forEach(tenantConfigFinder -> tenantConfigFinder.onChange(tenants::remove));
+        } else {
+            this.tokenCookieHandler = null;
+            this.idTokenCookieHandler = null;
+            this.refreshTokenCookieHandler = null;
+            this.tenantCookieHandler = null;
+            this.stateCookieHandler = null;
+            this.corsSupport = null;
+            this.oidcConfigFinders = List.of();
+        }
     }
 
     /**
@@ -581,7 +590,7 @@ public final class OidcFeature implements HttpFeature {
     // if they try to provide wrong data
     private void sendErrorResponse(ServerResponse serverResponse) {
         serverResponse.status(Status.UNAUTHORIZED_401);
-        serverResponse.send("Not a valid authorization code2");
+        serverResponse.send("Not a valid authorization code");
     }
 
     String increaseRedirectCounter(String state) {
@@ -647,19 +656,18 @@ public final class OidcFeature implements HttpFeature {
         private Builder() {
         }
 
-        private static Config findMyKey(Config rootConfig, String providerName) {
+        private static Optional<Config> findMyKey(Config rootConfig, String providerName) {
             if (rootConfig.key().name().equals(providerName)) {
-                return rootConfig;
+                return Optional.of(rootConfig);
             }
 
             return rootConfig.get("security.providers")
                     .asNodeList()
-                    .get()
+                    .orElseGet(List::of)
                     .stream()
                     .filter(it -> it.get(providerName).exists())
                     .findFirst()
-                    .map(it -> it.get(providerName))
-                    .orElseThrow(() -> new SecurityException("No configuration found for provider named: " + providerName));
+                    .map(it -> it.get(providerName));
         }
 
         @Override
@@ -712,7 +720,10 @@ public final class OidcFeature implements HttpFeature {
             // if this is root config, we need to honor `security.enabled`
             config.get("security.enabled").asBoolean().ifPresent(this::enabled);
 
-            config(findMyKey(config, providerName));
+            findMyKey(config, providerName)
+                    .ifPresentOrElse(this::config,
+                                     () -> enabled(false));
+
             return this;
         }
 

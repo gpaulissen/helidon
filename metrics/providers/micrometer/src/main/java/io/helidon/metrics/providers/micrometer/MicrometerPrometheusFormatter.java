@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023 Oracle and/or its affiliates.
+ * Copyright (c) 2023, 2025 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -92,7 +92,7 @@ public class MicrometerPrometheusFormatter implements MeterRegistryFormatter {
         }
 
         // Replace non-identifier characters.
-        result = result.replaceAll("[^A-Za-z0-9_]", "_");
+        result = result.replaceAll("[^A-Za-z0-9_:]", "_");
 
         return result;
     }
@@ -106,7 +106,7 @@ public class MicrometerPrometheusFormatter implements MeterRegistryFormatter {
     static Set<String> meterNameSuffixes(Meter.Type meterType) {
         return switch (meterType) {
             case COUNTER -> Set.of("_total");
-            case DISTRIBUTION_SUMMARY, LONG_TASK_TIMER, TIMER -> Set.of("_count", "_sum", "_max");
+            case DISTRIBUTION_SUMMARY, LONG_TASK_TIMER, TIMER -> Set.of("_count", "_sum", "_max", "_bucket");
             case GAUGE, OTHER -> Set.of();
         };
     }

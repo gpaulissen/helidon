@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, 2023 Oracle and/or its affiliates.
+ * Copyright (c) 2022, 2025 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,6 @@ import java.util.Timer;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
@@ -44,6 +43,9 @@ import javax.net.ssl.SSLServerSocket;
 
 import io.helidon.common.HelidonServiceLoader;
 import io.helidon.common.LazyValue;
+import io.helidon.common.concurrency.limits.FixedLimit;
+import io.helidon.common.concurrency.limits.Limit;
+import io.helidon.common.concurrency.limits.NoopSemaphore;
 import io.helidon.common.context.Context;
 import io.helidon.common.socket.SocketOptions;
 import io.helidon.common.task.HelidonTaskExecutor;
@@ -74,9 +76,7 @@ class ServerListener implements ListenerContext {
     private final Router router;
     private final HelidonTaskExecutor readerExecutor;
     private final ExecutorService sharedExecutor;
-    private final Thread serverThread;
     private final DirectHandlers directHandlers;
-    private final CompletableFuture<Void> closeFuture;
     private final Tls tls;
     private final SocketOptions connectionOptions;
     private final InetSocketAddress configuredAddress;
@@ -86,12 +86,15 @@ class ServerListener implements ListenerContext {
     private final ContentEncodingContext contentEncodingContext;
     private final Context context;
     private final Semaphore connectionSemaphore;
-    private final Semaphore requestSemaphore;
+    private final Limit requestLimit;
     private final Map<String, ServerConnection> activeConnections = new ConcurrentHashMap<>();
 
     private volatile boolean running;
+    private volatile boolean inCheckpoint;
     private volatile int connectedPort;
     private volatile ServerSocket serverSocket;
+    private volatile Thread serverThread;
+    private volatile CompletableFuture<Void> closeFuture;
 
     @SuppressWarnings("unchecked")
     ServerListener(String socketName,
@@ -117,11 +120,19 @@ class ServerListener implements ListenerContext {
                 });
 
         this.connectionSemaphore = listenerConfig.maxTcpConnections() == -1
-                ? new NoopSemaphore()
+                ? NoopSemaphore.INSTANCE
                 : new Semaphore(listenerConfig.maxTcpConnections());
-        this.requestSemaphore = listenerConfig.maxConcurrentRequests() == -1
-                ? new NoopSemaphore()
-                : new Semaphore(listenerConfig.maxConcurrentRequests());
+
+        if (listenerConfig.maxConcurrentRequests() == -1) {
+            this.requestLimit = listenerConfig.concurrencyLimit()
+                    .orElseGet(FixedLimit::create); // unlimited unless configured
+        } else {
+            this.requestLimit = FixedLimit.builder()
+                    .permits(listenerConfig.maxConcurrentRequests())
+                    .build();
+        }
+        this.requestLimit.init(socketName);
+
         this.connectionProviders = ConnectionProviders.create(selectors);
         this.socketName = socketName;
         this.listenerConfig = listenerConfig;
@@ -136,21 +147,13 @@ class ServerListener implements ListenerContext {
                 .build());
         this.gracePeriod = listenerConfig.shutdownGracePeriod();
 
-        this.serverThread = Thread.ofPlatform()
-                .inheritInheritableThreadLocals(true)
-                .daemon(false)
-                .name("server-" + socketName + "-listener")
-                .unstarted(this::listen);
+        initServerThread();
 
         // to read requests and execute tasks
-        this.readerExecutor = ThreadPerTaskExecutor.create(Thread.ofVirtual()
-                                                                   .factory());
+        this.readerExecutor = ExecutorsFactory.newServerListenerReaderExecutor();
 
         // to do anything else (writers etc.)
-        this.sharedExecutor = Executors.newThreadPerTaskExecutor(Thread.ofVirtual()
-                                                                         .factory());
-
-        this.closeFuture = new CompletableFuture<>();
+        this.sharedExecutor = ExecutorsFactory.newServerListenerSharedExecutor();
 
         int port = listenerConfig.port();
         if (port < 1) {
@@ -164,6 +167,15 @@ class ServerListener implements ListenerContext {
                                                         listenerConfig,
                                                         this::activeConnections);
         ith.start();
+    }
+
+    private void initServerThread() {
+        this.closeFuture = new CompletableFuture<>();
+        this.serverThread = Thread.ofPlatform()
+                .inheritInheritableThreadLocals(true)
+                .daemon(false)
+                .name("server-" + socketName + "-listener")
+                .unstarted(this::listen);
     }
 
     @Override
@@ -205,6 +217,10 @@ class ServerListener implements ListenerContext {
         return connectedPort;
     }
 
+    Router router() {
+        return router;
+    }
+
     InetSocketAddress configuredAddress() {
         return configuredAddress;
     }
@@ -214,43 +230,53 @@ class ServerListener implements ListenerContext {
             return;
         }
         running = false;
+        suspend(true);
+        router.afterStop();
+    }
+
+    private void suspend(boolean shutdownExecutors) {
         try {
             // Stop listening for connections
             serverSocket.close();
+            // Close all active connections
+            activeConnections().forEach(connection -> connection.close(true));
 
-            // Shutdown reader executor
-            readerExecutor.terminate(gracePeriod.toMillis(), TimeUnit.MILLISECONDS);
-            if (!readerExecutor.isTerminated()) {
-                LOGGER.log(DEBUG, "Some tasks in reader executor did not terminate gracefully");
-                readerExecutor.forceTerminate();
-            }
-
-            // Shutdown shared executor
-            try {
-                sharedExecutor.shutdown();
-                boolean done = sharedExecutor.awaitTermination(gracePeriod.toMillis(), TimeUnit.MILLISECONDS);
-                if (!done) {
-                    List<Runnable> running = sharedExecutor.shutdownNow();
-                    if (!running.isEmpty()) {
-                        LOGGER.log(DEBUG, running.size() + " tasks in shared executor did not terminate gracefully");
-                    }
+            if (shutdownExecutors) {
+                // Shutdown reader executor
+                readerExecutor.terminate(gracePeriod.toMillis(), TimeUnit.MILLISECONDS);
+                if (!readerExecutor.isTerminated()) {
+                    LOGGER.log(DEBUG, "Some tasks in reader executor did not terminate gracefully");
+                    readerExecutor.forceTerminate();
                 }
-            } catch (InterruptedException e) {
-                // falls through
-            }
 
+                // Shutdown shared executor
+                try {
+                    sharedExecutor.shutdown();
+                    boolean done = sharedExecutor.awaitTermination(gracePeriod.toMillis(), TimeUnit.MILLISECONDS);
+                    if (!done) {
+                        List<Runnable> running = sharedExecutor.shutdownNow();
+                        if (!running.isEmpty()) {
+                            LOGGER.log(DEBUG, running.size() + " tasks in shared executor did not terminate gracefully");
+                        }
+                    }
+                } catch (InterruptedException e) {
+                    // falls through
+                }
+            }
         } catch (IOException e) {
             LOGGER.log(INFO, "Exception thrown on socket close", e);
         }
         serverThread.interrupt();
         closeFuture.join();
-        router.afterStop();
     }
 
     @SuppressWarnings("resource")
     void start() {
         router.beforeStart();
+        startIt();
+    }
 
+    private void startIt() {
         try {
             SSLServerSocket sslServerSocket = tls.enabled() ? tls.createServerSocket() : null;
             serverSocket = tls.enabled() ? sslServerSocket : new ServerSocket();
@@ -340,7 +366,7 @@ class ServerListener implements ListenerContext {
                     connectionOptions.configureSocket(socket);
                     ConnectionHandler handler = new ConnectionHandler(this,
                                                     connectionSemaphore,
-                                                    requestSemaphore,
+                                                    requestLimit,
                                                     connectionProviders,
                                                     activeConnections,
                                                     socket,
@@ -349,7 +375,7 @@ class ServerListener implements ListenerContext {
                                                     tls);
                     readerExecutor.execute(handler);
                 } catch (RejectedExecutionException e) {
-                    LOGGER.log(ERROR, "Executor rejected handler for new connection");
+                    LOGGER.log(ERROR, "Executor rejected handler for new connection", e);
 
                     // the socket was never handled
                     try {
@@ -379,12 +405,16 @@ class ServerListener implements ListenerContext {
                 if (!e.getMessage().contains("Socket closed")) {
                     LOGGER.log(ERROR, "Got a socket exception while listening, this server socket is terminating now", e);
                 }
-                if (running) {
+                if (inCheckpoint) {
+                    break;
+                } else if (running) {
                     stop();
                 }
             } catch (Throwable e) {
                 LOGGER.log(ERROR, "Got a throwable while listening, this server socket is terminating now", e);
-                if (running) {
+                if (inCheckpoint) {
+                    break;
+                } else if (running) {
                     stop();
                 }
             }
@@ -396,5 +426,18 @@ class ServerListener implements ListenerContext {
 
     private List<ServerConnection> activeConnections() {
         return new ArrayList<>(activeConnections.values());
+    }
+
+    void suspend() {
+        inCheckpoint = true;
+        suspend(false);
+        serverThread = null;
+        closeFuture = null;
+    }
+
+    void resume() {
+        initServerThread();
+        startIt();
+        inCheckpoint = false;
     }
 }

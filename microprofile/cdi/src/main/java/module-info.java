@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019, 2023 Oracle and/or its affiliates.
+ * Copyright (c) 2019, 2025 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,22 +23,24 @@ import io.helidon.common.features.api.HelidonFlavor;
  * @see jakarta.enterprise.context
  */
 @Feature(value = "CDI",
-        description = "Jakarta CDI implementation",
-        in = HelidonFlavor.MP,
-        path = "CDI"
+         description = "Jakarta CDI implementation",
+         in = HelidonFlavor.MP,
+         path = "CDI"
 )
-@SuppressWarnings({ "requires-automatic", "requires-transitive-automatic" })
+@SuppressWarnings({"requires-automatic", "requires-transitive-automatic"})
 module io.helidon.microprofile.cdi {
 
     requires io.helidon.common.context;
     requires io.helidon.common.features.api;
     requires io.helidon.common.features;
+    requires io.helidon.common.configurable;
     requires io.helidon.common;
     requires io.helidon.config.mp;
     requires io.helidon.config;
     requires io.helidon.logging.common;
+    requires io.helidon.service.registry;
+    requires io.helidon.metadata.reflection;
     requires jakarta.el; // weld requires jakarta.el.ELResolver on module path
-    requires java.logging;
     requires java.sql; // weld requires java.sql.Date and we fail if not on classpath
     requires jdk.unsupported; // needed for Unsafe used from Weld
     requires microprofile.config.api;
@@ -69,6 +71,10 @@ module io.helidon.microprofile.cdi {
     provides org.jboss.weld.bootstrap.api.Service
             with io.helidon.microprofile.cdi.ExecutorServices;
 
+    provides jakarta.enterprise.inject.spi.Extension
+            with io.helidon.microprofile.cdi.ExecuteOnExtension,
+                    io.helidon.microprofile.cdi.ServiceRegistryExtension;
+
     opens io.helidon.microprofile.cdi to weld.core.impl;
-	
+
 }

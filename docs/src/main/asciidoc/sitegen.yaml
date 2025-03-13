@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2018, 2024 Oracle and/or its affiliates.
+# Copyright (c) 2018, 2025 Oracle and/or its affiliates.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -91,9 +91,11 @@ backend:
                   - "security-oidc.adoc"
                   - "tracing.adoc"
                   - "mp-tutorial.adoc"
+                  - "upgrade_4x.adoc"
                   - "maven-build.adoc"
                   - "gradle-build.adoc"
                   - "graalnative.adoc"
+                  - "crac.adoc"
                   - "jlink-image.adoc"
                   - "se-services.adoc"
                   - "testing-junit5.adoc"
@@ -154,6 +156,7 @@ backend:
                   type: "icon"
                   value: "filter_drama"
                 sources:
+                  - "langchain4j.adoc"
                   - "oci.adoc"
                   - "hcv.adoc"
                   - "neo4j.adoc"
@@ -189,6 +192,12 @@ backend:
                 sources:
                   - "metrics.adoc"
                   - "prometheus-exemplar-support.adoc"
+              - type: "PAGE"
+                title: "Observability"
+                source: "observability.adoc"
+                glyph:
+                  type: "icon"
+                  value: "search"
               - type: "MENU"
                 title: "OpenAPI"
                 dir: "openapi"
@@ -227,18 +236,27 @@ backend:
                 sources:
                   - "engine.adoc"
                   - "rsoperators.adoc"
-              - type: "PAGE"
+              - type: "MENU"
                 title: "REST Client"
-                source: "restclient.adoc"
+                dir: "restclient"
                 glyph:
                   type: "icon"
                   value: "airplay"
+                sources:
+                  - "restclient.adoc"
+                  - "restclientmetrics.adoc"
               - type: "PAGE"
                 title: "Scheduling"
                 source: "scheduling.adoc"
                 glyph:
                   type: "icon"
                   value: "access_alarm"
+              - type: "PAGE"
+                title: "Threading"
+                source: "threading.adoc"
+                glyph:
+                  type: "icon"
+                  value: "clear_all"
               - type: "MENU"
                 title: "Security"
                 dir: "security"
@@ -264,6 +282,7 @@ backend:
                   value: "analytics"
               - type: "MENU"
                 title: "Testing"
+                dir: "testing"
                 glyph:
                   type: "icon"
                   value: "thumbs_up_down"
@@ -306,16 +325,21 @@ backend:
                   - "metrics.adoc"
                   - "security-oidc.adoc"
                   - "tracing.adoc"
-                  - "upgrade.adoc"
-                  - "upgrade_3x.adoc"
                   - "upgrade_4x.adoc"
                   - "maven-build.adoc"
                   - "gradle-build.adoc"
                   - "graalnative.adoc"
+                  - "crac.adoc"
                   - "jlink-image.adoc"
                   - "webclient.adoc"
                   - "dbclient.adoc"
                   - "performance-tuning.adoc"
+              - type: "PAGE"
+                title: "Builder"
+                source: "builder.adoc"
+                glyph:
+                  type: "icon"
+                  value: "handyman"
               - type: "MENU"
                 title: "Config"
                 dir: "config"
@@ -377,9 +401,17 @@ backend:
                   type: "icon"
                   value: "filter_drama"
                 sources:
+                  - "eureka/eureka-registration.adoc"
+                  - "langchain4j/langchain4j.adoc"
                   - "oci.adoc"
                   - "hcv.adoc"
                   - "neo4j.adoc"
+              - type: "PAGE"
+                title: "Injection"
+                source: "injection.adoc"
+                glyph:
+                  type: "icon"
+                  value: "colorize"
               - type: "MENU"
                 title: "Metrics"
                 dir: "metrics"
@@ -420,12 +452,15 @@ backend:
                 sources:
                   - "engine.adoc"
                   - "rsoperators.adoc"
-              - type: "PAGE"
+              - type: "MENU"
                 title: "Webserver"
-                source: "webserver.adoc"
+                dir: "webserver"
                 glyph:
                   type: "icon"
                   value: "settings_ethernet"
+                sources:
+                  - "webserver.adoc"
+                  - "concurrency-limits.adoc"
               - type: "PAGE"
                 title: "Scheduling"
                 source: "scheduling.adoc"

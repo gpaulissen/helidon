@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, 2024 Oracle and/or its affiliates.
+ * Copyright (c) 2023, 2025 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +22,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 /**
- * Records timing information about large numbers of short-running events (e.g., HTTP requests).
+ * Accumulates timing information about large numbers of short-running events (e.g., HTTP requests), each with a
+ * {@link java.time.Duration} value, and reports statistics over all samples (count, total time, mean, max) as well as grouping
+ * samples using percentiles or bucket boundaries.
  */
 public interface Timer extends Meter, HistogramSupport {
 
@@ -227,6 +229,14 @@ public interface Timer extends Meter, HistogramSupport {
         Builder maximumExpectedValue(Duration max);
 
         /**
+         * Prepares the timer to publish a percentile histogram.
+         *
+         * @param value whether to publish a percentile histogram
+         * @return updated builder
+         */
+        Builder publishPercentileHistogram(boolean value);
+
+        /**
          * Returns the percentiles set in the builder, if any.
          *
          * @return percentiles
@@ -253,5 +263,12 @@ public interface Timer extends Meter, HistogramSupport {
          * @return maximum expected value if set; empty otherwise
          */
         Optional<Duration> maximumExpectedValue();
+
+        /**
+         * Returns the setting for publishing percentile histogram.
+         *
+         * @return whether to publish percentile histogram
+         */
+        Optional<Boolean> publishPercentileHistogram();
     }
 }

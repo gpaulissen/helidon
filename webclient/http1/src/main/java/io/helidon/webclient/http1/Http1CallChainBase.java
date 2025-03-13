@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, 2024 Oracle and/or its affiliates.
+ * Copyright (c) 2023, 2025 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -250,7 +250,7 @@ abstract class Http1CallChainBase implements WebClientService.Chain {
         ContentDecoder decoder;
 
         if (encodingSupport.contentDecodingEnabled() && responseHeaders.contains(HeaderNames.CONTENT_ENCODING)) {
-            String contentEncoding = responseHeaders.get(HeaderNames.CONTENT_ENCODING).value();
+            String contentEncoding = responseHeaders.get(HeaderNames.CONTENT_ENCODING).get();
             if (encodingSupport.contentDecodingSupported(contentEncoding)) {
                 decoder = encodingSupport.decoder(contentEncoding);
             } else {
@@ -277,7 +277,7 @@ abstract class Http1CallChainBase implements WebClientService.Chain {
             return false;
         }
         // Why is NOT_MODIFIED_304 not added here too?
-        if (responseStatus == Status.NO_CONTENT_204) {
+        if (responseStatus.code() == Status.NO_CONTENT_204.code()) {
             return false;
         }
         if ((
@@ -304,7 +304,6 @@ abstract class Http1CallChainBase implements WebClientService.Chain {
 
     static class ContentLengthInputStream extends InputStream {
         private final DataReader reader;
-        private final long length;
         private final Runnable entityProcessedRunnable;
         private final HelidonSocket socket;
 
@@ -319,7 +318,6 @@ abstract class Http1CallChainBase implements WebClientService.Chain {
                                  long length) {
             this.socket = socket;
             this.reader = reader;
-            this.length = length;
             this.remainingLength = length;
             // we can only get the response at the time of completion, as the instance is created after this constructor
             // returns

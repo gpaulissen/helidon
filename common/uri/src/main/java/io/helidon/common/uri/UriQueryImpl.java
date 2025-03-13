@@ -31,7 +31,7 @@ import io.helidon.common.mapper.MapperManager;
 import io.helidon.common.mapper.OptionalValue;
 import io.helidon.common.mapper.Value;
 
-import static io.helidon.common.uri.UriEncoding.decodeUri;
+import static io.helidon.common.uri.UriEncoding.decodeQuery;
 
 // must be lazily populated to prevent perf overhead when queries are ignored
 final class UriQueryImpl implements UriQuery {
@@ -148,11 +148,11 @@ final class UriQueryImpl implements UriQuery {
     public OptionalValue<String> first(String name) {
         ensureDecoded();
         List<String> values = decodedQueryParams.get(name);
-        if (values == null) {
+        if (values == null || values.isEmpty()) {
             return OptionalValue.create(MapperManager.global(), name, GenericType.STRING, "uri", "query");
         }
-        String value = values.isEmpty() ? "" : values.iterator().next();
-        return OptionalValue.create(MapperManager.global(), name, value, GenericType.STRING, "uri", "query");
+        return OptionalValue.create(MapperManager.global(), name, values.iterator().next(),
+                GenericType.STRING, "uri", "query");
     }
 
     @Override
@@ -190,6 +190,11 @@ final class UriQueryImpl implements UriQuery {
         return "?" + rawValue();
     }
 
+    UriQuery validate() {
+        UriValidator.validateQuery(query);
+        return this;
+    }
+
     private void ensureDecoded() {
         if (decodedQueryParams == null) {
             Map<String, List<String>> newQueryParams = new HashMap<>();
@@ -215,11 +220,11 @@ final class UriQueryImpl implements UriQuery {
     private void addDecoded(Map<String, List<String>> newQueryParams, String next) {
         int eq = next.indexOf('=');
         if (eq == -1) {
-            newQueryParams.putIfAbsent(decodeUri(next), new LinkedList<>());
+            newQueryParams.putIfAbsent(decodeQuery(next), new LinkedList<>());
         } else {
             String name = next.substring(0, eq);
             String value = next.substring(eq + 1);
-            newQueryParams.computeIfAbsent(decodeUri(name), it -> new LinkedList<>()).add(decodeUri(value));
+            newQueryParams.computeIfAbsent(decodeQuery(name), it -> new LinkedList<>()).add(decodeQuery(value));
         }
     }
 

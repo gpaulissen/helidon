@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
 
-    Copyright (c) 2018, 2024 Oracle and/or its affiliates.
+    Copyright (c) 2018, 2025 Oracle and/or its affiliates.
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -23,12 +23,16 @@
     <parent>
         <groupId>io.helidon</groupId>
         <artifactId>helidon-project</artifactId>
-        <version>4.0.0-SNAPSHOT</version>
+        <version>4.2.0-SNAPSHOT</version>
     </parent>
     <groupId>io.helidon.common</groupId>
     <artifactId>helidon-common-project</artifactId>
     <packaging>pom</packaging>
     <name>Helidon Common Project</name>
+
+    <properties>
+        <javadoc.fail-on-warnings>true</javadoc.fail-on-warnings>
+    </properties>
 
     <modules>
         <module>buffers</module>
@@ -51,5 +55,22 @@
         <module>tls</module>
         <module>types</module>
         <module>uri</module>
+        <module>concurrency</module>
+        <module>resumable</module>
     </modules>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>check-dependencies</id>
+                        <phase>verify</phase>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023 Oracle and/or its affiliates.
+ * Copyright (c) 2023, 2024 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -151,7 +151,7 @@ class NoOpMeter implements Meter, NoOpWrapper {
         }
     }
 
-    abstract static class Builder<B extends Builder<B, M>, M extends Meter> {
+    abstract static class Builder<B extends Builder<B, M>, M extends Meter> implements Wrapper {
 
         private final String name;
         private final Map<String, String> tags = new TreeMap<>(); // tree map for ordering by tag name
@@ -214,6 +214,11 @@ class NoOpMeter implements Meter, NoOpWrapper {
 
         public Optional<String> scope() {
             return Optional.ofNullable(scope);
+        }
+
+        @Override
+        public <R> R unwrap(Class<? extends R> c) {
+            return c.cast(this);
         }
     }
 
@@ -349,6 +354,7 @@ class NoOpMeter implements Meter, NoOpWrapper {
 
             private io.helidon.metrics.api.DistributionStatisticsConfig.Builder distributionStatisticsConfigBuilder;
             private Double scale;
+            private boolean publishPercentileHistogram;
 
             private Builder(String name) {
                 super(name, Type.DISTRIBUTION_SUMMARY);
@@ -373,6 +379,12 @@ class NoOpMeter implements Meter, NoOpWrapper {
             }
 
             @Override
+            public io.helidon.metrics.api.DistributionSummary.Builder publishPercentileHistogram(boolean value) {
+                this.publishPercentileHistogram = value;
+                return identity();
+            }
+
+            @Override
             public Optional<Double> scale() {
                 return Optional.ofNullable(scale);
             }
@@ -381,6 +393,12 @@ class NoOpMeter implements Meter, NoOpWrapper {
             public Optional<io.helidon.metrics.api.DistributionStatisticsConfig.Builder> distributionStatisticsConfig() {
                 return Optional.ofNullable(distributionStatisticsConfigBuilder);
             }
+
+            @Override
+            public Optional<Boolean> publishPercentileHistogram() {
+                return Optional.ofNullable(publishPercentileHistogram);
+            }
+
         }
     }
 
@@ -623,6 +641,7 @@ class NoOpMeter implements Meter, NoOpWrapper {
             private Duration[] buckets;
             private Duration min;
             private Duration max;
+            private Boolean publishPercentileHistogram;
 
             private Builder(String name) {
                 super(name, Type.TIMER);
@@ -658,6 +677,12 @@ class NoOpMeter implements Meter, NoOpWrapper {
             }
 
             @Override
+            public io.helidon.metrics.api.Timer.Builder publishPercentileHistogram(boolean value) {
+                publishPercentileHistogram = value;
+                return identity();
+            }
+
+            @Override
             public Iterable<Double> percentiles() {
                 return Arrays.stream(percentiles)
                         .boxed().toList();
@@ -676,6 +701,11 @@ class NoOpMeter implements Meter, NoOpWrapper {
             @Override
             public Optional<Duration> maximumExpectedValue() {
                 return Optional.ofNullable(max);
+            }
+
+            @Override
+            public Optional<Boolean> publishPercentileHistogram() {
+                return Optional.ofNullable(publishPercentileHistogram);
             }
 
         }

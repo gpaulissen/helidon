@@ -18,13 +18,68 @@ package io.helidon.builder.codegen;
 
 import java.util.Optional;
 
+import io.helidon.codegen.CodegenUtil;
+import io.helidon.codegen.classmodel.ContentBuilder;
+import io.helidon.codegen.classmodel.Method;
 import io.helidon.common.types.TypeName;
+import io.helidon.common.types.TypedElementInfo;
 
+import static io.helidon.builder.codegen.Types.SERVICES;
 import static io.helidon.common.types.TypeNames.LIST;
 
 class TypeHandlerList extends TypeHandlerCollection {
 
-    TypeHandlerList(String name, String getterName, String setterName, TypeName declaredType) {
-        super(name, getterName, setterName, declaredType, LIST, "toList()", Optional.empty());
+    TypeHandlerList(TypeName blueprintType,
+                    TypedElementInfo annotatedMethod,
+                    String name, String getterName, String setterName, TypeName declaredType) {
+        super(blueprintType, annotatedMethod, name, getterName, setterName, declaredType, LIST, "toList()", Optional.empty());
+    }
+
+    static String isMutatedField(String propertyName) {
+        return "is" + CodegenUtil.capitalize(propertyName) + "Mutated";
+    }
+
+    @Override
+    Method.Builder extraAdderContent(Method.Builder builder) {
+        return builder.addContentLine(isMutatedField() + " = true;");
+    }
+
+    @Override
+    Method.Builder extraSetterContent(Method.Builder builder) {
+        return builder.addContentLine(isMutatedField() + " = true;");
+    }
+
+    @Override
+    void updateBuilderFromServices(ContentBuilder<?> content, String builder) {
+        /*
+        builder.option(Services.all(Type.class));
+         */
+        content.addContent(builder)
+                .addContent(".")
+                .addContent(setterName())
+                .addContent("(")
+                .addContent(SERVICES)
+                .addContent(".all(")
+                .addContent(actualType())
+                .addContentLine(".class));");
+    }
+
+    @Override
+    void updateBuilderFromRegistry(ContentBuilder<?> content, String builder, String registry) {
+        /*
+        builder.option(registry.all(Type.class));
+         */
+        content.addContent(builder)
+                .addContent(".")
+                .addContent(setterName())
+                .addContent("(")
+                .addContent(registry)
+                .addContent(".all(")
+                .addContent(actualType())
+                .addContentLine(".class));");
+    }
+
+    private String isMutatedField() {
+        return isMutatedField(name());
     }
 }

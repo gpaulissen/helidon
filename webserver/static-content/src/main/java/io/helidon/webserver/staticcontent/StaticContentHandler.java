@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, 2023 Oracle and/or its affiliates.
+ * Copyright (c) 2017, 2024 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,12 +24,11 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.chrono.ChronoZonedDateTime;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 import io.helidon.common.configurable.LruCache;
 import io.helidon.common.media.type.MediaType;
@@ -52,19 +51,23 @@ import io.helidon.webserver.http.ServerResponse;
 /**
  * Base implementation of static content support.
  */
+@SuppressWarnings("removal") // will be replaced with HttpService once removed, or made package local
 abstract class StaticContentHandler implements StaticContentService {
     private static final System.Logger LOGGER = System.getLogger(StaticContentHandler.class.getName());
 
-    private final Map<String, CachedHandlerInMemory> inMemoryCache = new ConcurrentHashMap<>();
     private final LruCache<String, CachedHandler> handlerCache;
     private final String welcomeFilename;
     private final Function<String, String> resolvePathFunction;
     private final AtomicInteger webServerCounter = new AtomicInteger();
+    private final MemoryCache memoryCache;
 
-    StaticContentHandler(StaticContentService.Builder<?> builder) {
-        this.welcomeFilename = builder.welcomeFileName();
-        this.resolvePathFunction = builder.resolvePathFunction();
-        this.handlerCache = builder.handlerCache();
+    StaticContentHandler(BaseHandlerConfig config) {
+        this.welcomeFilename = config.welcome().orElse(null);
+        this.resolvePathFunction = config.pathMapper();
+        this.handlerCache = LruCache.<String, CachedHandler>builder()
+                .update(it -> config.recordCacheCapacity().ifPresent(it::capacity))
+                .build();
+        this.memoryCache = config.memoryCache().orElseGet(MemoryCache::create);
     }
 
     /**
@@ -81,8 +84,11 @@ abstract class StaticContentHandler implements StaticContentService {
             return;
         }
         etag = unquoteETag(etag);
+
+        Header newEtag = HeaderValues.create(HeaderNames.ETAG, true, false, '"' + etag + '"');
         // Put ETag into the response
-        responseHeaders.set(HeaderNames.ETAG, '"' + etag + '"');
+        responseHeaders.set(newEtag);
+
         // Process If-None-Match header
         if (requestHeaders.contains(HeaderNames.IF_NONE_MATCH)) {
             List<String> ifNoneMatches = requestHeaders.get(HeaderNames.IF_NONE_MATCH).allValues();
@@ -90,7 +96,8 @@ abstract class StaticContentHandler implements StaticContentService {
                 ifNoneMatch = unquoteETag(ifNoneMatch);
                 if ("*".equals(ifNoneMatch) || ifNoneMatch.equals(etag)) {
                     // using exception to handle normal flow (same as in reactive static content)
-                    throw new HttpException("Accepted by If-None-Match header", Status.NOT_MODIFIED_304, true);
+                    throw new HttpException("Accepted by If-None-Match header", Status.NOT_MODIFIED_304, true)
+                            .header(newEtag);
                 }
             }
         }
@@ -108,7 +115,8 @@ abstract class StaticContentHandler implements StaticContentService {
                     }
                 }
                 if (!ifMatchChecked) {
-                    throw new HttpException("Not accepted by If-Match header", Status.PRECONDITION_FAILED_412, true);
+                    throw new HttpException("Not accepted by If-Match header", Status.PRECONDITION_FAILED_412, true)
+                            .header(newEtag);
                 }
             }
         }
@@ -167,6 +175,11 @@ abstract class StaticContentHandler implements StaticContentService {
         }
     }
 
+    static String formatLastModified(Instant lastModified) {
+        ZonedDateTime dt = ZonedDateTime.ofInstant(lastModified, ZoneId.systemDefault());
+        return dt.format(DateTime.RFC_1123_DATE_TIME);
+    }
+
     @Override
     public void beforeStart() {
         webServerCounter.incrementAndGet();
@@ -194,7 +207,7 @@ abstract class StaticContentHandler implements StaticContentService {
      */
     void releaseCache() {
         handlerCache.clear();
-        inMemoryCache.clear();
+        memoryCache.clear(this);
     }
 
     /**
@@ -242,7 +255,7 @@ abstract class StaticContentHandler implements StaticContentService {
      * @param response      an HTTP response
      * @param mapped        whether the requestedPath is mapped using a mapping function (and differs from defined path)
      * @return {@code true} only if static content was found and processed.
-     * @throws java.io.IOException                          if resource is not acceptable
+     * @throws java.io.IOException              if resource is not acceptable
      * @throws io.helidon.http.RequestException if some known WEB error
      */
     abstract boolean doHandle(Method method,
@@ -267,7 +280,7 @@ abstract class StaticContentHandler implements StaticContentService {
      * @param handler  in memory handler
      */
     void cacheInMemory(String resource, CachedHandlerInMemory handler) {
-        inMemoryCache.put(resource, handler);
+        memoryCache.cache(this, resource, handler);
     }
 
     /**
@@ -277,7 +290,15 @@ abstract class StaticContentHandler implements StaticContentService {
      * @return handler if found
      */
     Optional<CachedHandlerInMemory> cacheInMemory(String resource) {
-        return Optional.ofNullable(inMemoryCache.get(resource));
+        return memoryCache.get(this, resource);
+    }
+
+    boolean canCacheInMemory(int size) {
+        return memoryCache.available(size);
+    }
+
+    Optional<CachedHandlerInMemory> cacheInMemory(String resource, int size, Supplier<CachedHandlerInMemory> supplier) {
+        return memoryCache.cache(this, resource, size, supplier);
     }
 
     /**
@@ -299,19 +320,6 @@ abstract class StaticContentHandler implements StaticContentService {
 
     LruCache<String, CachedHandler> handlerCache() {
         return handlerCache;
-    }
-
-    private static String unquoteETag(String etag) {
-        if (etag == null || etag.isEmpty()) {
-            return etag;
-        }
-        if (etag.startsWith("W/") || etag.startsWith("w/")) {
-            etag = etag.substring(2);
-        }
-        if (etag.startsWith("\"") && etag.endsWith("\"")) {
-            etag = etag.substring(1, etag.length() - 1);
-        }
-        return etag;
     }
 
     void cacheInMemory(String resource, MediaType contentType, byte[] bytes, Optional<Instant> lastModified) {
@@ -344,8 +352,16 @@ abstract class StaticContentHandler implements StaticContentService {
         cacheInMemory(resource, inMemoryResource);
     }
 
-    static String formatLastModified(Instant lastModified) {
-        ZonedDateTime dt = ZonedDateTime.ofInstant(lastModified, ZoneId.systemDefault());
-        return dt.format(DateTime.RFC_1123_DATE_TIME);
+    private static String unquoteETag(String etag) {
+        if (etag == null || etag.isEmpty()) {
+            return etag;
+        }
+        if (etag.startsWith("W/") || etag.startsWith("w/")) {
+            etag = etag.substring(2);
+        }
+        if (etag.startsWith("\"") && etag.endsWith("\"")) {
+            etag = etag.substring(1, etag.length() - 1);
+        }
+        return etag;
     }
 }

@@ -17,8 +17,6 @@
 import io.helidon.common.features.api.Feature;
 import io.helidon.common.features.api.HelidonFlavor;
 import io.helidon.common.features.api.Preview;
-import io.helidon.microprofile.telemetry.TelemetryAutoDiscoverable;
-import io.helidon.microprofile.telemetry.TelemetryCdiExtension;
 
 /**
  * MicroProfile Telemetry support for Helidon.
@@ -36,6 +34,7 @@ module io.helidon.microprofile.telemetry {
     requires io.helidon.config.mp;
     requires io.helidon.config;
     requires io.helidon.microprofile.server;
+    requires io.helidon.tracing;
     requires io.helidon.tracing.providers.opentelemetry;
     requires io.opentelemetry.api;
     requires io.opentelemetry.context;
@@ -45,9 +44,9 @@ module io.helidon.microprofile.telemetry {
     requires io.opentelemetry.sdk;
     requires jakarta.annotation;
     requires jakarta.inject;
-    requires java.logging;
     requires microprofile.config.api;
     requires opentelemetry.instrumentation.annotations;
+    requires io.opentelemetry.semconv;
 
     requires static io.helidon.common.features.api;
 
@@ -56,11 +55,15 @@ module io.helidon.microprofile.telemetry {
     requires transitive jersey.common;
 
     exports io.helidon.microprofile.telemetry;
+    exports io.helidon.microprofile.telemetry.spi;
+
+    uses io.helidon.microprofile.telemetry.spi.HelidonTelemetryClientFilterHelper;
+    uses io.helidon.microprofile.telemetry.spi.HelidonTelemetryContainerFilterHelper;
 
     provides jakarta.enterprise.inject.spi.Extension
-            with TelemetryCdiExtension;
+            with io.helidon.microprofile.telemetry.TelemetryCdiExtension;
 
     provides org.glassfish.jersey.internal.spi.AutoDiscoverable
-            with TelemetryAutoDiscoverable;
+            with io.helidon.microprofile.telemetry.TelemetryAutoDiscoverable;
 
 }

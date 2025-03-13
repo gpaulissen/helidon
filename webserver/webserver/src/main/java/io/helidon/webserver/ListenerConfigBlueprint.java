@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, 2024 Oracle and/or its affiliates.
+ * Copyright (c) 2023, 2025 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,6 +28,8 @@ import java.util.Optional;
 
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
+import io.helidon.common.concurrency.limits.Limit;
+import io.helidon.common.concurrency.limits.spi.LimitProvider;
 import io.helidon.common.context.Context;
 import io.helidon.common.socket.SocketOptions;
 import io.helidon.common.tls.Tls;
@@ -149,7 +151,10 @@ interface ListenerConfigBlueprint {
      * Listener receive buffer size.
      *
      * @return buffer size in bytes
+     * @deprecated use {@link SocketOptions#socketReceiveBufferSize()} instead
+     * via {@link #connectionOptions()}.
      */
+    @Deprecated(forRemoval = true, since = "4.2.0")
     @Option.Configured
     Optional<Integer> receiveBufferSize();
 
@@ -163,13 +168,25 @@ interface ListenerConfigBlueprint {
     int writeQueueLength();
 
     /**
+     * If enabled and {@link #writeQueueLength()} is greater than 1, then
+     * start with async writes but possibly switch to sync writes if
+     * async queue size is always below a certain threshold.
+     *
+     * @return smart async setting
+     */
+    @Option.Configured
+    @Option.DefaultBoolean(false)
+    boolean smartAsyncWrites();
+
+    /**
      * Initial buffer size in bytes of {@link java.io.BufferedOutputStream} created internally to
-     * write data to a socket connection. Default is {@code 512}.
+     * write data to a socket connection. Default is {@code 4096}. Set buffer size to a value
+     * less than one to turn off buffering.
      *
      * @return initial buffer size used for writing
      */
     @Option.Configured
-    @Option.DefaultInt(512)
+    @Option.DefaultInt(4096)
     int writeBufferSize();
 
     /**
@@ -187,7 +204,9 @@ interface ListenerConfigBlueprint {
      * Configuration of a connection (established from client against our server).
      *
      * @return connection configuration
+     * @deprecated use {@link #connectionOptions()} instead
      */
+    @Deprecated(forRemoval = true, since = "4.2.0")
     @Option.Configured
     Optional<ConnectionConfig> connectionConfig();
 
@@ -243,12 +262,27 @@ interface ListenerConfigBlueprint {
      * Defaults to {@code -1}, meaning "unlimited" - what the system allows.
      * Also make sure that this number is higher than the expected time it takes to handle a single request in your application,
      * as otherwise you may stop in-progress requests.
+     * <p>
+     * Setting this option will always ignore {@link #concurrencyLimit()} and will use
+     * the {@link io.helidon.common.concurrency.limits.FixedLimit}.
      *
      * @return number of requests that can be processed on this listener, regardless of protocol
      */
     @Option.Configured
     @Option.DefaultInt(-1)
     int maxConcurrentRequests();
+
+    /**
+     * Concurrency limit to use to limit concurrent execution of incoming requests.
+     * The default is to have unlimited concurrency.
+     * <p>
+     * Note that if {@link #maxConcurrentRequests()} is configured, this is ignored.
+     *
+     * @return concurrency limit
+     */
+    @Option.Provider(value = LimitProvider.class, discoverServices = false)
+    @Option.Configured
+    Optional<Limit> concurrencyLimit();
 
     /**
      * How long should we wait before closing a connection that has no traffic on it.
@@ -337,6 +371,7 @@ interface ListenerConfigBlueprint {
      *
      * @return proxy support status
      */
+    @Option.Configured
     @Option.Default("false")
     boolean enableProxyProtocol();
 
@@ -365,4 +400,12 @@ interface ListenerConfigBlueprint {
         }
     }
 
+    /**
+     * Configuration for this listener's error handling.
+     *
+     * @return error handling
+     */
+    @Option.Configured
+    @Option.DefaultMethod("create")
+    ErrorHandling errorHandling();
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023, 2024 Oracle and/or its affiliates.
+ * Copyright (c) 2023, 2025 Oracle and/or its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,11 +23,9 @@ import java.util.concurrent.ExecutorService;
 
 import io.helidon.builder.api.Option;
 import io.helidon.builder.api.Prototype;
-import io.helidon.inject.configdriven.api.ConfigBean;
 
 @Prototype.Blueprint(decorator = CircuitBreakerConfigBlueprint.BuilderDecorator.class)
 @Prototype.Configured("fault-tolerance.circuit-breakers")
-@ConfigBean(wantDefault = true, repeatable = true)
 interface CircuitBreakerConfigBlueprint extends Prototype.Factory<CircuitBreaker> {
     int DEFAULT_ERROR_RATIO = 60;
     int DEFAULT_SUCCESS_THRESHOLD = 1;
@@ -103,6 +101,19 @@ interface CircuitBreakerConfigBlueprint extends Prototype.Factory<CircuitBreaker
      */
     @Option.Singular
     Set<Class<? extends Throwable>> applyOn();
+
+    /**
+     * Flag to enable metrics for this instance. The value of this flag is
+     * combined with the global config entry
+     * {@link io.helidon.faulttolerance.FaultTolerance#FT_METRICS_DEFAULT_ENABLED}.
+     * If either of these flags is {@code true}, then metrics will be enabled
+     * for the instance.
+     *
+     * @return metrics enabled flag
+     */
+    @Option.Configured
+    @Option.DefaultBoolean(false)
+    boolean enableMetrics();
 
     class BuilderDecorator implements Prototype.BuilderDecorator<CircuitBreakerConfig.BuilderBase<?, ?>> {
         @Override
